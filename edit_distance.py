@@ -21,6 +21,26 @@ def load_dictionary(file_path: str) -> List[str]:
         print(f"警告: 辞書ファイル {file_path} が見つかりません。空のリストを返します。")
         return []
 
+def normalize_edit_distance(edit_distance: int, word_length: int) -> float:
+    """
+    文字数による編集距離の正規化を行う関数
+    
+    Args:
+        edit_distance (int): 元の編集距離
+        word_length (int): 単語の長さ
+        
+    Returns:
+        float: 正規化された編集距離（0-1の範囲）
+    """
+    if word_length == 0:
+        return 0.0
+    
+    # 編集距離を文字数で割って正規化
+    normalized_distance = edit_distance / word_length
+    
+    # 0-1の範囲に収める（必要に応じて調整可能）
+    return min(normalized_distance, 1.0)
+
 def calculate_edit_distance_scores(keywords: List[str], dictionary: List[str]) -> float:
     """
     キーワードリストと辞書の間の編集距離スコアを計算する関数
@@ -39,7 +59,14 @@ def calculate_edit_distance_scores(keywords: List[str], dictionary: List[str]) -
     min_distances = []
     for keyword in keywords:
         # 各キーワードと辞書の単語との編集距離を計算
-        distances = [distance(keyword, dict_word) for dict_word in dictionary]
+        distances = []
+        for dict_word in dictionary:
+            # 編集距離を計算
+            raw_distance = distance(keyword, dict_word)
+            # 文字数による正規化
+            normalized_distance = normalize_edit_distance(raw_distance, len(keyword))
+            distances.append(normalized_distance)
+        
         # 最小の編集距離を記録
         min_distances.append(min(distances))
     
@@ -48,8 +75,8 @@ def calculate_edit_distance_scores(keywords: List[str], dictionary: List[str]) -
     avg_distance = np.mean(min_distances)
     # 2. 編集距離の分散
     distance_variance = np.var(min_distances)
-    # 3. 大きな編集距離を持つキーワードの割合（編集距離が2以上のキーワード）
-    high_distance_ratio = sum(1 for d in min_distances if d >= 2) / len(min_distances)
+    # 3. 大きな編集距離を持つキーワードの割合（正規化された距離が0.3以上のキーワード）
+    high_distance_ratio = sum(1 for d in min_distances if d >= 0.3) / len(min_distances)
     
     # 総合スコアの計算（重み付けは調整可能）
     ambiguity_score = (avg_distance * 0.4 + distance_variance * 0.3 + high_distance_ratio * 0.3)

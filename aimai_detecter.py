@@ -6,6 +6,7 @@ from janome.tokenizer import Tokenizer
 from collections import Counter
 import nltk
 import ssl
+import json
 
 try:
     _create_unverified_https_context = ssl._create_unverified_context
@@ -29,6 +30,14 @@ def get_word_senses(word):
     synsets = wn.synsets(word, lang='jpn')
     return len(synsets)
 
+def calculate_word_ambiguity(word):
+    """
+    単語の曖昧さスコアを計算する関数
+    """
+    word_hira = jaconv.kata2hira(word)
+    senses = get_word_senses(word_hira)
+    return senses
+
 def calculate_ambiguity_score(text):
     """
     文章の曖昧さスコアを計算する関数
@@ -39,15 +48,18 @@ def calculate_ambiguity_score(text):
     
     # 各単語の意味の数を取得
     sense_counts = []
+    word_scores = {}  # 単語ごとのスコアを格納する辞書
+    
     for word in words:
         # ひらがなに変換して検索
         word_hira = jaconv.kata2hira(word)
         senses = get_word_senses(word_hira)
         if senses > 0:  # WordNetに登録されている単語のみを考慮
             sense_counts.append(senses)
+            word_scores[word] = senses
     
     if not sense_counts:
-        return 0
+        return 0, word_scores
     
     # 曖昧さスコアの計算
     # 1. 平均的な意味の数
@@ -60,7 +72,7 @@ def calculate_ambiguity_score(text):
     # 総合スコアの計算（重み付けは調整可能）
     ambiguity_score = (avg_senses * 0.4 + sense_variance * 0.3 + polysemy_ratio * 0.3)
     
-    return round(ambiguity_score, 3)
+    return round(ambiguity_score, 3), word_scores
 
 def main():
     # 入力Excelファイルの読み込み
@@ -69,14 +81,19 @@ def main():
     
     # 質問文の曖昧さスコアを計算
     ambiguity_scores = []
+    word_score_details = []
+    
     for question in df['Q']:
-        score = calculate_ambiguity_score(question)
+        score, word_scores = calculate_ambiguity_score(question)
         ambiguity_scores.append(score)
+        # 単語ごとのスコアをJSON形式の文字列に変換
+        word_score_details.append(json.dumps(word_scores, ensure_ascii=False))
     
     # 結果を新しいDataFrameに格納
     result_df = pd.DataFrame({
         '質問文': df['Q'],
-        '曖昧スコア': ambiguity_scores
+        '曖昧スコア': ambiguity_scores,
+        '単語ごとのスコア': word_score_details
     })
     
     # 結果をExcelファイルに出力
