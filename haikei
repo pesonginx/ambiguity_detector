@@ -1,13 +1,20 @@
-function countColorCellsByCell(rangeInput, colorCellInput) {
+function countColorCellsByCell(rangeValues, colorCellValue) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
 
-  // rangeInput, colorCellInput は Range オブジェクトとして渡される前提
-  const range = rangeInput;
-  const colorCell = colorCellInput;
+  // 引数として渡ってくる「値」から、位置を逆引き
+  const activeRange = SpreadsheetApp.getActiveRange();
+  const formulaCellRow = activeRange.getRow();
+  const formulaCellCol = activeRange.getColumn();
 
+  // getBackgroundsのために、元の引数の「相対位置」から範囲を取得
+  const range = sheet.getRange(formulaCellRow, formulaCellCol).offset(0, 0, rangeValues.length, rangeValues[0].length);
   const backgrounds = range.getBackgrounds();
+
+  // 色指定セルの位置を取得
+  const colorCell = sheet.getRange(formulaCellRow, formulaCellCol).offset(-1, 1); // 例: 上1行右1列のC11など
   const targetColor = colorCell.getBackground();
 
+  // カウントロジック
   let count = 0;
   for (let row of backgrounds) {
     for (let color of row) {
