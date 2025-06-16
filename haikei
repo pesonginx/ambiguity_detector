@@ -1,17 +1,24 @@
-function countColorCellsByCell(range, colorCell) {
-  // 背景色を取得
-  const targetColor = colorCell.getBackground();
-  const backgrounds = range.getBackgrounds();
-
-  // 一致カウント
-  let count = 0;
-  for (let row of backgrounds) {
-    for (let color of row) {
-      if (color.toLowerCase() === targetColor.toLowerCase()) {
+/**
+ * 指定範囲内で、参照セルと同じ背景色のセルをカウントして返す
+ *
+ * @param {Range} inputRange カウント対象のセル範囲（例: A1:C10）
+ * @param {Range} referenceCell 背景色を比較する参照セル（例: C11）
+ * @return {number} 同じ背景色のセル数
+ * @customfunction
+ */
+function COUNTBYCOLOR(inputRange, referenceCell) {
+  // 参照セルの背景色を取得
+  var targetColor = referenceCell.getBackground();
+  // 範囲内のすべてのセル背景色を2次元配列で取得
+  var backgrounds = inputRange.getBackgrounds();
+  var count = 0;
+  // 二重ループで同色セルをカウント
+  for (var i = 0; i < backgrounds.length; i++) {
+    for (var j = 0; j < backgrounds[i].length; j++) {
+      if (backgrounds[i][j] === targetColor) {
         count++;
       }
     }
   }
-
   return count;
 }
