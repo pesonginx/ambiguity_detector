@@ -87,37 +87,52 @@ class RAGAnalysis:
         bool
             塗りつぶされている場合True
         """
-        if not cell.fill or not isinstance(cell.fill, PatternFill):
+        if not cell.fill:
+            return False
+            
+        if not isinstance(cell.fill, PatternFill):
             return False
             
         fg_color = cell.fill.fgColor
+        bg_color = cell.fill.bgColor
+        pattern_type = cell.fill.patternType
         
-        # 白または無色の判定
-        if fg_color.type == "rgb":
-            # RGB値で白を判定
-            if fg_color.rgb and fg_color.rgb.upper() in ["FFFFFF", "FFFFFFFF", "00000000"]:
-                return False
-            # RGB値が設定されている場合は塗りつぶされている
-            if fg_color.rgb:
-                return True
-        elif fg_color.type == "theme":
-            # テーマ色で白を判定（一般的な白のテーマ番号）
-            if fg_color.theme in [0, 1]:  # 白系のテーマ番号
-                return False
-            # テーマ色が設定されている場合は塗りつぶされている
-            if fg_color.theme is not None:
-                return True
-        elif fg_color.type == "indexed":
-            # インデックス色で白を判定
-            if fg_color.indexed in [0, 1]:  # 白系のインデックス番号
-                return False
-            # インデックス色が設定されている場合は塗りつぶされている
-            if fg_color.indexed is not None:
-                return True
-        
-        # パターンが設定されている場合も塗りつぶされているとみなす
-        if cell.fill.patternType and cell.fill.patternType != 'none':
+        # パターンが設定されている場合
+        if pattern_type and pattern_type != 'none':
             return True
+        
+        # 前景色の判定
+        if fg_color and fg_color.type != "auto":
+            if fg_color.type == "rgb":
+                # RGB値で白を判定
+                if fg_color.rgb and fg_color.rgb.upper() in ["FFFFFF", "FFFFFFFF", "00000000"]:
+                    pass  # 白の場合は背景色をチェック
+                elif fg_color.rgb:
+                    return True  # 白以外のRGB色が設定されている
+            elif fg_color.type == "theme":
+                # テーマ色で白を判定
+                if fg_color.theme in [0, 1]:  # 白系のテーマ番号
+                    pass  # 白の場合は背景色をチェック
+                elif fg_color.theme is not None:
+                    return True  # 白以外のテーマ色が設定されている
+            elif fg_color.type == "indexed":
+                # インデックス色で白を判定
+                if fg_color.indexed in [0, 1]:  # 白系のインデックス番号
+                    pass  # 白の場合は背景色をチェック
+                elif fg_color.indexed is not None:
+                    return True  # 白以外のインデックス色が設定されている
+        
+        # 背景色の判定
+        if bg_color and bg_color.type != "auto":
+            if bg_color.type == "rgb":
+                if bg_color.rgb and bg_color.rgb.upper() not in ["FFFFFF", "FFFFFFFF", "00000000"]:
+                    return True  # 白以外の背景色が設定されている
+            elif bg_color.type == "theme":
+                if bg_color.theme not in [0, 1]:
+                    return True  # 白以外の背景テーマ色が設定されている
+            elif bg_color.type == "indexed":
+                if bg_color.indexed not in [0, 1]:
+                    return True  # 白以外の背景インデックス色が設定されている
                 
         return False
     
@@ -135,8 +150,11 @@ class RAGAnalysis:
         str
             色情報の文字列
         """
-        if not cell.fill or not isinstance(cell.fill, PatternFill):
-            return "No fill"
+        if not cell.fill:
+            return "No fill object"
+        
+        if not isinstance(cell.fill, PatternFill):
+            return f"Fill type: {type(cell.fill)}"
             
         fg_color = cell.fill.fgColor
         pattern_type = cell.fill.patternType
@@ -151,6 +169,11 @@ class RAGAnalysis:
             color_info += f"Indexed: {fg_color.indexed}"
         else:
             color_info += f"Type: {fg_color.type}"
+            
+        # 背景色も確認
+        bg_color = cell.fill.bgColor
+        if bg_color and bg_color.type != "auto":
+            color_info += f", BG: {bg_color.type}={bg_color.rgb if bg_color.type == 'rgb' else bg_color.theme if bg_color.type == 'theme' else bg_color.indexed}"
             
         return color_info
     
@@ -278,6 +301,10 @@ class RAGAnalysis:
                 excel_row = row_idx + 2  # ヘッダー行を考慮
                 excel_col = self.df.columns.get_loc(rag_col) + 1
                 
+                # デバッグ出力（座標確認）
+                if debug_colors and row_idx < 2:
+                    print(f"  座標: 行{excel_row}, 列{excel_col} ({rag_col})")
+                
                 # セルを取得
                 cell = self.worksheet.cell(row=excel_row, column=excel_col)
                 
@@ -285,7 +312,7 @@ class RAGAnalysis:
                 is_adopted = self.is_colored_cell(cell)
                 
                 # デバッグ出力（必要に応じて）
-                if debug_colors and row_idx < 3:  # 最初の3行のみデバッグ出力
+                if debug_colors and row_idx < 5:  # 最初の5行のみデバッグ出力
                     color_info = self.debug_cell_color(cell)
                     print(f"行{row_idx+1}, {rag_col}: {color_info} -> {'採択' if is_adopted else '未採択'}")
                 
@@ -524,7 +551,7 @@ def main():
     excel_file = "input.xlsx"
     
     # デバッグモード（色情報を表示するかどうか）
-    debug_colors = False  # Trueにすると色情報が表示されます
+    debug_colors = True  # Trueにすると色情報が表示されます
     
     # RAG分析クラスのインスタンスを作成
     analyzer = RAGAnalysis(excel_file)
