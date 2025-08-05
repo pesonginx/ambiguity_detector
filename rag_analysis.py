@@ -93,53 +93,97 @@ class RAGAnalysis:
         bool
             塗りつぶされている場合True
         """
-        if not cell.fill:
-            return False
-            
-        if not isinstance(cell.fill, PatternFill):
-            return False
-            
-        fg_color = cell.fill.fgColor
-        bg_color = cell.fill.bgColor
-        pattern_type = cell.fill.patternType
+        # 複数の方法で色情報を取得
+        fill_objects = []
         
-        # パターンが設定されている場合
-        if pattern_type and pattern_type != 'none':
-            return True
+        # 方法1: 直接のfill属性
+        if hasattr(cell, 'fill') and cell.fill:
+            fill_objects.append(cell.fill)
         
-        # 前景色の判定
-        if fg_color and fg_color.type != "auto":
-            if fg_color.type == "rgb":
-                # RGB値で白を判定
-                if fg_color.rgb and fg_color.rgb.upper() in ["FFFFFF", "FFFFFFFF", "00000000"]:
-                    pass  # 白の場合は背景色をチェック
-                elif fg_color.rgb:
-                    return True  # 白以外のRGB色が設定されている
-            elif fg_color.type == "theme":
-                # テーマ色で白を判定
-                if fg_color.theme in [0, 1]:  # 白系のテーマ番号
-                    pass  # 白の場合は背景色をチェック
-                elif fg_color.theme is not None:
-                    return True  # 白以外のテーマ色が設定されている
-            elif fg_color.type == "indexed":
-                # インデックス色で白を判定
-                if fg_color.indexed in [0, 1]:  # 白系のインデックス番号
-                    pass  # 白の場合は背景色をチェック
-                elif fg_color.indexed is not None:
-                    return True  # 白以外のインデックス色が設定されている
+        # 方法2: style.fill属性
+        if hasattr(cell, 'style') and hasattr(cell.style, 'fill') and cell.style.fill:
+            fill_objects.append(cell.style.fill)
         
-        # 背景色の判定
-        if bg_color and bg_color.type != "auto":
-            if bg_color.type == "rgb":
-                if bg_color.rgb and bg_color.rgb.upper() not in ["FFFFFF", "FFFFFFFF", "00000000"]:
-                    return True  # 白以外の背景色が設定されている
-            elif bg_color.type == "theme":
-                if bg_color.theme not in [0, 1]:
-                    return True  # 白以外の背景テーマ色が設定されている
-            elif bg_color.type == "indexed":
-                if bg_color.indexed not in [0, 1]:
-                    return True  # 白以外の背景インデックス色が設定されている
+        # 方法3: StyleProxyの内部オブジェクト
+        for fill in fill_objects[:]:  # コピーを作成してループ中に変更
+            if hasattr(fill, '_style') and hasattr(fill._style, 'fill'):
+                fill_objects.append(fill._style.fill)
+            elif hasattr(fill, 'fill'):
+                fill_objects.append(fill.fill)
+        
+        # 各fillオブジェクトをチェック
+        for fill in fill_objects:
+            if not fill:
+                continue
                 
+            if not isinstance(fill, PatternFill):
+                continue
+                
+            fg_color = fill.fgColor
+            bg_color = fill.bgColor
+            pattern_type = fill.patternType
+            
+            # パターンが設定されている場合
+            if pattern_type and pattern_type != 'none':
+                return True
+            
+            # 前景色の判定
+            if fg_color and fg_color.type != "auto":
+                if fg_color.type == "rgb":
+                    # RGB値で白を判定
+                    if fg_color.rgb and fg_color.rgb.upper() in ["FFFFFF", "FFFFFFFF", "00000000"]:
+                        pass  # 白の場合は背景色をチェック
+                    elif fg_color.rgb:
+                        return True  # 白以外のRGB色が設定されている
+                elif fg_color.type == "theme":
+                    # テーマ色で白を判定
+                    if fg_color.theme in [0, 1]:  # 白系のテーマ番号
+                        pass  # 白の場合は背景色をチェック
+                    elif fg_color.theme is not None:
+                        return True  # 白以外のテーマ色が設定されている
+                elif fg_color.type == "indexed":
+                    # インデックス色で白を判定
+                    if fg_color.indexed in [0, 1]:  # 白系のインデックス番号
+                        pass  # 白の場合は背景色をチェック
+                    elif fg_color.indexed is not None:
+                        return True  # 白以外のインデックス色が設定されている
+            
+            # 背景色の判定
+            if bg_color and bg_color.type != "auto":
+                if bg_color.type == "rgb":
+                    if bg_color.rgb and bg_color.rgb.upper() not in ["FFFFFF", "FFFFFFFF", "00000000"]:
+                        return True  # 白以外の背景色が設定されている
+                elif bg_color.type == "theme":
+                    if bg_color.theme not in [0, 1]:
+                        return True  # 白以外の背景テーマ色が設定されている
+                elif bg_color.type == "indexed":
+                    if bg_color.indexed not in [0, 1]:
+                        return True  # 白以外の背景インデックス色が設定されている
+                    
+        return False
+    
+    def check_conditional_formatting(self, cell) -> bool:
+        """
+        条件付き書式で色が設定されているかチェック
+        
+        Parameters:
+        -----------
+        cell : openpyxl.cell.Cell
+            チェック対象のセル
+            
+        Returns:
+        --------
+        bool
+            条件付き書式で色が設定されている場合True
+        """
+        # 条件付き書式をチェック
+        for cf in self.worksheet.conditional_formatting:
+            for rule in cf.cf_rules:
+                if hasattr(rule, 'dxf') and rule.dxf and hasattr(rule.dxf, 'fill'):
+                    # 条件付き書式の範囲をチェック
+                    for range_str in cf.sqref.ranges:
+                        if cell.coordinate in range_str:
+                            return True
         return False
     
     def debug_cell_color(self, cell) -> str:
@@ -156,15 +200,33 @@ class RAGAnalysis:
         str
             色情報の文字列
         """
-        if not cell.fill:
+        # StyleProxyオブジェクトの場合は実際のスタイルを取得
+        if hasattr(cell, 'style') and hasattr(cell.style, 'fill'):
+            fill = cell.style.fill
+        else:
+            fill = cell.fill
+            
+        if not fill:
             return "No fill object"
         
-        if not isinstance(cell.fill, PatternFill):
-            return f"Fill type: {type(cell.fill)}"
+        # StyleProxyの場合は実際のオブジェクトを取得
+        if hasattr(fill, '_style'):
+            fill = fill._style.fill
+        elif hasattr(fill, 'fill'):
+            fill = fill.fill
+        
+        if not isinstance(fill, PatternFill):
+            # StyleProxyオブジェクトの詳細情報を表示
+            if hasattr(fill, '_style'):
+                return f"StyleProxy with _style: {type(fill._style)}"
+            elif hasattr(fill, 'fill'):
+                return f"StyleProxy with fill: {type(fill.fill)}"
+            else:
+                return f"Fill type: {type(fill)}, attributes: {dir(fill)}"
             
-        fg_color = cell.fill.fgColor
-        bg_color = cell.fill.bgColor
-        pattern_type = cell.fill.patternType
+        fg_color = fill.fgColor
+        bg_color = fill.bgColor
+        pattern_type = fill.patternType
         
         color_info = f"Pattern: {pattern_type}, "
         
@@ -331,6 +393,10 @@ class RAGAnalysis:
                 
                 # セルが塗りつぶされているかチェック
                 is_adopted = self.is_colored_cell(cell)
+                
+                # 条件付き書式もチェック
+                if not is_adopted:
+                    is_adopted = self.check_conditional_formatting(cell)
                 
                 # デバッグ出力（必要に応じて）
                 if debug_colors and row_idx < 5:  # 最初の5行のみデバッグ出力
