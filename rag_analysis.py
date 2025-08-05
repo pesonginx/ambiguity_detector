@@ -129,37 +129,43 @@ class RAGAnalysis:
             
             # 前景色の判定
             if fg_color and fg_color.type != "auto":
-                if fg_color.type == "rgb":
-                    # RGB値で白を判定
-                    if fg_color.rgb and fg_color.rgb.upper() in ["FFFFFF", "FFFFFFFF", "00000000"]:
-                        pass  # 白の場合は背景色をチェック
-                    elif fg_color.rgb:
-                        return True  # 白以外のRGB色が設定されている
-                elif fg_color.type == "theme":
-                    # テーマ色で白を判定
-                    if fg_color.theme in [0, 1]:  # 白系のテーマ番号
-                        pass  # 白の場合は背景色をチェック
-                    elif fg_color.theme is not None:
-                        return True  # 白以外のテーマ色が設定されている
-                elif fg_color.type == "indexed":
-                    # インデックス色で白を判定
-                    if fg_color.indexed in [0, 1]:  # 白系のインデックス番号
-                        pass  # 白の場合は背景色をチェック
-                    elif fg_color.indexed is not None:
-                        return True  # 白以外のインデックス色が設定されている
+                if self._is_colored_color(fg_color):
+                    return True
             
             # 背景色の判定
             if bg_color and bg_color.type != "auto":
-                if bg_color.type == "rgb":
-                    if bg_color.rgb and bg_color.rgb.upper() not in ["FFFFFF", "FFFFFFFF", "00000000"]:
-                        return True  # 白以外の背景色が設定されている
-                elif bg_color.type == "theme":
-                    if bg_color.theme not in [0, 1]:
-                        return True  # 白以外の背景テーマ色が設定されている
-                elif bg_color.type == "indexed":
-                    if bg_color.indexed not in [0, 1]:
-                        return True  # 白以外の背景インデックス色が設定されている
+                if self._is_colored_color(bg_color):
+                    return True
                     
+        return False
+    
+    def _is_colored_color(self, color) -> bool:
+        """Colorオブジェクトが白以外の色かどうかを判定"""
+        if not color:
+            return False
+            
+        if color.type == "rgb":
+            # RGB値で白を判定
+            if color.rgb and color.rgb.upper() in ["FFFFFF", "FFFFFFFF", "00000000"]:
+                return False
+            # RGB値が設定されている場合は塗りつぶされている
+            if color.rgb:
+                return True
+        elif color.type == "theme":
+            # テーマ色で白を判定（一般的な白のテーマ番号）
+            if color.theme in [0, 1]:  # 白系のテーマ番号
+                return False
+            # テーマ色が設定されている場合は塗りつぶされている
+            if color.theme is not None:
+                return True
+        elif color.type == "indexed":
+            # インデックス色で白を判定
+            if color.indexed in [0, 1]:  # 白系のインデックス番号
+                return False
+            # インデックス色が設定されている場合は塗りつぶされている
+            if color.indexed is not None:
+                return True
+                
         return False
     
     def check_conditional_formatting(self, cell) -> bool:
@@ -200,63 +206,76 @@ class RAGAnalysis:
         str
             色情報の文字列
         """
-        # StyleProxyオブジェクトの場合は実際のスタイルを取得
-        if hasattr(cell, 'style') and hasattr(cell.style, 'fill'):
-            fill = cell.style.fill
-        else:
-            fill = cell.fill
-            
-        if not fill:
-            return "No fill object"
+        # 複数の方法で色情報を取得
+        fill_objects = []
         
-        # StyleProxyの場合は実際のオブジェクトを取得
-        if hasattr(fill, '_style'):
-            fill = fill._style.fill
-        elif hasattr(fill, 'fill'):
-            fill = fill.fill
+        # 方法1: 直接のfill属性
+        if hasattr(cell, 'fill') and cell.fill:
+            fill_objects.append(cell.fill)
         
-        if not isinstance(fill, PatternFill):
-            # StyleProxyオブジェクトの詳細情報を表示
-            if hasattr(fill, '_style'):
-                return f"StyleProxy with _style: {type(fill._style)}"
+        # 方法2: style.fill属性
+        if hasattr(cell, 'style') and hasattr(cell.style, 'fill') and cell.style.fill:
+            fill_objects.append(cell.style.fill)
+        
+        # 方法3: StyleProxyの内部オブジェクト
+        for fill in fill_objects[:]:  # コピーを作成してループ中に変更
+            if hasattr(fill, '_style') and hasattr(fill._style, 'fill'):
+                fill_objects.append(fill._style.fill)
             elif hasattr(fill, 'fill'):
-                return f"StyleProxy with fill: {type(fill.fill)}"
+                fill_objects.append(fill.fill)
+        
+        if not fill_objects:
+            return "No fill objects found"
+        
+        color_info = []
+        for i, fill in enumerate(fill_objects):
+            if not fill:
+                color_info.append(f"Fill{i}: None")
+                continue
+                
+            if not isinstance(fill, PatternFill):
+                color_info.append(f"Fill{i}: {type(fill)}")
+                continue
+                
+            fg_color = fill.fgColor
+            bg_color = fill.bgColor
+            pattern_type = fill.patternType
+            
+            fill_info = f"Fill{i}: Pattern={pattern_type}"
+            
+            # 前景色の詳細情報
+            if fg_color:
+                fill_info += f", FG={self._get_color_info(fg_color)}"
             else:
-                return f"Fill type: {type(fill)}, attributes: {dir(fill)}"
+                fill_info += ", FG=None"
+                
+            # 背景色の詳細情報
+            if bg_color:
+                fill_info += f", BG={self._get_color_info(bg_color)}"
+            else:
+                fill_info += ", BG=None"
+                
+            color_info.append(fill_info)
             
-        fg_color = fill.fgColor
-        bg_color = fill.bgColor
-        pattern_type = fill.patternType
-        
-        color_info = f"Pattern: {pattern_type}, "
-        
-        # 前景色の詳細情報
-        if fg_color:
-            color_info += f"FG: {fg_color.type}"
-            if fg_color.type == "rgb":
-                color_info += f"={fg_color.rgb}"
-            elif fg_color.type == "theme":
-                color_info += f"={fg_color.theme}"
-            elif fg_color.type == "indexed":
-                color_info += f"={fg_color.indexed}"
-            elif fg_color.type == "auto":
-                color_info += "=auto"
-        else:
-            color_info += "FG: None"
+        return " | ".join(color_info)
+    
+    def _get_color_info(self, color) -> str:
+        """Colorオブジェクトから色情報を取得"""
+        if not color:
+            return "None"
             
-        # 背景色の詳細情報
-        if bg_color:
-            color_info += f", BG: {bg_color.type}"
-            if bg_color.type == "rgb":
-                color_info += f"={bg_color.rgb}"
-            elif bg_color.type == "theme":
-                color_info += f"={bg_color.theme}"
-            elif bg_color.type == "indexed":
-                color_info += f"={bg_color.indexed}"
-            elif bg_color.type == "auto":
-                color_info += "=auto"
+        color_info = f"{color.type}"
+        
+        if color.type == "rgb":
+            color_info += f"={color.rgb}"
+        elif color.type == "theme":
+            color_info += f"={color.theme}"
+        elif color.type == "indexed":
+            color_info += f"={color.indexed}"
+        elif color.type == "auto":
+            color_info += "=auto"
         else:
-            color_info += ", BG: None"
+            color_info += f"=unknown({color})"
             
         return color_info
     
