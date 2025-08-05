@@ -40,11 +40,43 @@ class RAGAnalysisXlwings:
             # シートを選択
             if sheet_name is None:
                 self.worksheet = self.workbook.sheets[0]
+                sheet_name = self.worksheet.name
             else:
                 self.worksheet = self.workbook.sheets[sheet_name]
             
             # pandasでデータを読み込み（分析用）
-            self.df = pd.read_excel(self.excel_file_path, sheet_name=sheet_name)
+            # より安全な方法でシート名を取得
+            if sheet_name is None:
+                # シート名を取得してから読み込み
+                try:
+                    excel_file = pd.ExcelFile(self.excel_file_path)
+                    sheet_names = excel_file.sheet_names
+                    sheet_name = sheet_names[0]
+                    print(f"利用可能なシート: {sheet_names}")
+                    print(f"最初のシート '{sheet_name}' を使用します")
+                except Exception as e:
+                    print(f"シート名の取得に失敗: {e}")
+                    # デフォルトで最初のシートを使用
+                    sheet_name = 0
+            
+            # 明示的にシートを指定して読み込み
+            try:
+                self.df = pd.read_excel(self.excel_file_path, sheet_name=sheet_name)
+            except Exception as e:
+                print(f"指定されたシート '{sheet_name}' の読み込みに失敗: {e}")
+                # 最初のシートを試行
+                self.df = pd.read_excel(self.excel_file_path, sheet_name=0)
+                print("最初のシート（インデックス0）を使用します")
+            
+            # DataFrameかどうかチェック
+            if not isinstance(self.df, pd.DataFrame):
+                print(f"警告: 読み込まれたデータがDataFrameではありません。型: {type(self.df)}")
+                if isinstance(self.df, dict):
+                    print(f"利用可能なシート: {list(self.df.keys())}")
+                    # 最初のシートを使用
+                    first_sheet = list(self.df.keys())[0]
+                    self.df = self.df[first_sheet]
+                    print(f"最初のシート '{first_sheet}' を使用します")
             
             print(f"Excelファイルを読み込みました: {self.excel_file_path}")
             print(f"使用シート: {self.worksheet.name}")
