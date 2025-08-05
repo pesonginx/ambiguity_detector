@@ -35,13 +35,37 @@ class RAGAnalysis:
         """
         try:
             # pandasでデータを読み込み
-            self.df = pd.read_excel(self.excel_file_path, sheet_name=sheet_name)
+            excel_data = pd.read_excel(self.excel_file_path, sheet_name=sheet_name)
+            
+            # 複数シートの場合は辞書形式で返されるため、適切に処理
+            if isinstance(excel_data, dict):
+                print(f"複数シートが検出されました。利用可能なシート: {list(excel_data.keys())}")
+                if sheet_name is None:
+                    # シート名が指定されていない場合は最初のシートを使用
+                    sheet_name = list(excel_data.keys())[0]
+                    print(f"最初のシート '{sheet_name}' を使用します。")
+                elif sheet_name not in excel_data:
+                    print(f"指定されたシート '{sheet_name}' が見つかりません。最初のシートを使用します。")
+                    sheet_name = list(excel_data.keys())[0]
+                self.df = excel_data[sheet_name]
+            else:
+                self.df = excel_data
             
             # openpyxlでワークブックを読み込み（色情報取得用）
             self.workbook = openpyxl.load_workbook(self.excel_file_path)
-            self.worksheet = self.workbook[sheet_name] if sheet_name else self.workbook.active
+            
+            # シート名の処理
+            if sheet_name is None:
+                self.worksheet = self.workbook.active
+            else:
+                try:
+                    self.worksheet = self.workbook[sheet_name]
+                except KeyError:
+                    print(f"警告: シート '{sheet_name}' が見つかりません。最初のシートを使用します。")
+                    self.worksheet = self.workbook.active
             
             print(f"Excelファイルを読み込みました: {self.excel_file_path}")
+            print(f"使用シート: {sheet_name if sheet_name else '最初のシート'}")
             print(f"データ形状: {self.df.shape}")
             print(f"カラム: {list(self.df.columns)}")
             
