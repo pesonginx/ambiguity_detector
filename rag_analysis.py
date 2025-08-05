@@ -73,9 +73,9 @@ class RAGAnalysis:
             print(f"Excelファイルの読み込みに失敗しました: {e}")
             raise
     
-    def is_yellow_cell(self, cell) -> bool:
+    def is_colored_cell(self, cell) -> bool:
         """
-        セルが黄色で塗りつぶされているかチェック
+        セルが塗りつぶされているかチェック（白または無色以外）
         
         Parameters:
         -----------
@@ -85,28 +85,74 @@ class RAGAnalysis:
         Returns:
         --------
         bool
-            黄色で塗りつぶされている場合True
+            塗りつぶされている場合True
         """
         if not cell.fill or not isinstance(cell.fill, PatternFill):
             return False
             
         fg_color = cell.fill.fgColor
         
-        # 黄色の判定（複数のパターンに対応）
+        # 白または無色の判定
         if fg_color.type == "rgb":
-            # RGB値で黄色を判定
-            if fg_color.rgb and fg_color.rgb.upper() in ["FFFF00", "FFFF0000"]:
+            # RGB値で白を判定
+            if fg_color.rgb and fg_color.rgb.upper() in ["FFFFFF", "FFFFFFFF", "00000000"]:
+                return False
+            # RGB値が設定されている場合は塗りつぶされている
+            if fg_color.rgb:
                 return True
         elif fg_color.type == "theme":
-            # テーマ色で黄色を判定（一般的な黄色のテーマ番号）
-            if fg_color.theme in [5, 6]:  # 黄色系のテーマ番号
+            # テーマ色で白を判定（一般的な白のテーマ番号）
+            if fg_color.theme in [0, 1]:  # 白系のテーマ番号
+                return False
+            # テーマ色が設定されている場合は塗りつぶされている
+            if fg_color.theme is not None:
                 return True
         elif fg_color.type == "indexed":
-            # インデックス色で黄色を判定
-            if fg_color.indexed in [6, 7, 8]:  # 黄色系のインデックス番号
+            # インデックス色で白を判定
+            if fg_color.indexed in [0, 1]:  # 白系のインデックス番号
+                return False
+            # インデックス色が設定されている場合は塗りつぶされている
+            if fg_color.indexed is not None:
                 return True
+        
+        # パターンが設定されている場合も塗りつぶされているとみなす
+        if cell.fill.patternType and cell.fill.patternType != 'none':
+            return True
                 
         return False
+    
+    def debug_cell_color(self, cell) -> str:
+        """
+        セルの色情報をデバッグ用に取得
+        
+        Parameters:
+        -----------
+        cell : openpyxl.cell.Cell
+            チェック対象のセル
+            
+        Returns:
+        --------
+        str
+            色情報の文字列
+        """
+        if not cell.fill or not isinstance(cell.fill, PatternFill):
+            return "No fill"
+            
+        fg_color = cell.fill.fgColor
+        pattern_type = cell.fill.patternType
+        
+        color_info = f"Pattern: {pattern_type}, "
+        
+        if fg_color.type == "rgb":
+            color_info += f"RGB: {fg_color.rgb}"
+        elif fg_color.type == "theme":
+            color_info += f"Theme: {fg_color.theme}"
+        elif fg_color.type == "indexed":
+            color_info += f"Indexed: {fg_color.indexed}"
+        else:
+            color_info += f"Type: {fg_color.type}"
+            
+        return color_info
     
     def get_rag_columns(self) -> List[str]:
         """
@@ -185,10 +231,15 @@ class RAGAnalysis:
         
         return result
     
-    def analyze_rag_adoption(self) -> pd.DataFrame:
+    def analyze_rag_adoption(self, debug_colors: bool = False) -> pd.DataFrame:
         """
         RAG検索結果の採択分析を実行
         
+        Parameters:
+        -----------
+        debug_colors : bool, optional
+            色情報のデバッグ出力を行うかどうか（デフォルト: False）
+            
         Returns:
         --------
         pd.DataFrame
@@ -230,8 +281,13 @@ class RAGAnalysis:
                 # セルを取得
                 cell = self.worksheet.cell(row=excel_row, column=excel_col)
                 
-                # 黄色で塗りつぶされているかチェック
-                is_adopted = self.is_yellow_cell(cell)
+                # セルが塗りつぶされているかチェック
+                is_adopted = self.is_colored_cell(cell)
+                
+                # デバッグ出力（必要に応じて）
+                if debug_colors and row_idx < 3:  # 最初の3行のみデバッグ出力
+                    color_info = self.debug_cell_color(cell)
+                    print(f"行{row_idx+1}, {rag_col}: {color_info} -> {'採択' if is_adopted else '未採択'}")
                 
                 # Scoreと類似度を抽出
                 cell_text = str(row_data[rag_col]) if not pd.isna(row_data[rag_col]) else ""
@@ -467,6 +523,9 @@ def main():
     # 分析対象のExcelファイル
     excel_file = "input.xlsx"
     
+    # デバッグモード（色情報を表示するかどうか）
+    debug_colors = False  # Trueにすると色情報が表示されます
+    
     # RAG分析クラスのインスタンスを作成
     analyzer = RAGAnalysis(excel_file)
     
@@ -475,7 +534,7 @@ def main():
         analyzer.load_excel()
         
         # RAG採択分析を実行
-        result_df = analyzer.analyze_rag_adoption()
+        result_df = analyzer.analyze_rag_adoption(debug_colors=debug_colors)
         
         # サマリーを表示
         analyzer.print_summary(result_df)
