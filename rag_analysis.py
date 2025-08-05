@@ -69,6 +69,12 @@ class RAGAnalysis:
             print(f"データ形状: {self.df.shape}")
             print(f"カラム: {list(self.df.columns)}")
             
+            # Excelファイルの基本情報を表示
+            print(f"ワークブックのシート数: {len(self.workbook.sheetnames)}")
+            print(f"利用可能なシート: {self.workbook.sheetnames}")
+            print(f"現在のワークシート: {self.worksheet.title}")
+            print(f"ワークシートの範囲: A1:{self.worksheet.max_column}{self.worksheet.max_row}")
+            
         except Exception as e:
             print(f"Excelファイルの読み込みに失敗しました: {e}")
             raise
@@ -157,23 +163,38 @@ class RAGAnalysis:
             return f"Fill type: {type(cell.fill)}"
             
         fg_color = cell.fill.fgColor
+        bg_color = cell.fill.bgColor
         pattern_type = cell.fill.patternType
         
         color_info = f"Pattern: {pattern_type}, "
         
-        if fg_color.type == "rgb":
-            color_info += f"RGB: {fg_color.rgb}"
-        elif fg_color.type == "theme":
-            color_info += f"Theme: {fg_color.theme}"
-        elif fg_color.type == "indexed":
-            color_info += f"Indexed: {fg_color.indexed}"
+        # 前景色の詳細情報
+        if fg_color:
+            color_info += f"FG: {fg_color.type}"
+            if fg_color.type == "rgb":
+                color_info += f"={fg_color.rgb}"
+            elif fg_color.type == "theme":
+                color_info += f"={fg_color.theme}"
+            elif fg_color.type == "indexed":
+                color_info += f"={fg_color.indexed}"
+            elif fg_color.type == "auto":
+                color_info += "=auto"
         else:
-            color_info += f"Type: {fg_color.type}"
+            color_info += "FG: None"
             
-        # 背景色も確認
-        bg_color = cell.fill.bgColor
-        if bg_color and bg_color.type != "auto":
-            color_info += f", BG: {bg_color.type}={bg_color.rgb if bg_color.type == 'rgb' else bg_color.theme if bg_color.type == 'theme' else bg_color.indexed}"
+        # 背景色の詳細情報
+        if bg_color:
+            color_info += f", BG: {bg_color.type}"
+            if bg_color.type == "rgb":
+                color_info += f"={bg_color.rgb}"
+            elif bg_color.type == "theme":
+                color_info += f"={bg_color.theme}"
+            elif bg_color.type == "indexed":
+                color_info += f"={bg_color.indexed}"
+            elif bg_color.type == "auto":
+                color_info += "=auto"
+        else:
+            color_info += ", BG: None"
             
         return color_info
     
