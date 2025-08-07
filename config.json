@@ -1,0 +1,9 @@
+{
+  "url": "https://help.line.me/line/smartphone/categoryId/20007850/3/pc?utm_term=help&utm_campaign=contentsId20000367_contentsId10002423&utm_medium=messaging&lang=ja&utm_source=help&contentId=20007005",
+  "check_interval_minutes": 30,
+  "output_directory": "line_help_output",
+  "log_file": "line_help_monitor.log",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+  "timeout_seconds": 30,
+  "max_retries": 3
+} 
