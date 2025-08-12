@@ -20,14 +20,14 @@ def fix_markdown_headings(directory_path=".", backup=True):
         "errors": []
     }
     
-    # ディレクトリ内のすべての.mdファイルを検索
+    # ディレクトリ内のすべての.mdファイルを検索（help.line.meを含むファイルのみ）
     md_files = []
     for root, dirs, files in os.walk(directory_path):
         for file in files:
-            if file.lower().endswith('.md'):
+            if file.lower().endswith('.md') and 'help.line.me' in file:
                 md_files.append(os.path.join(root, file))
     
-    print(f"見つかったマークダウンファイル: {len(md_files)}個")
+    print(f"見つかったhelp.line.meを含むマークダウンファイル: {len(md_files)}個")
     
     for file_path in md_files:
         try:
@@ -93,14 +93,14 @@ def preview_changes(directory_path="."):
         "preview": []
     }
     
-    # ディレクトリ内のすべての.mdファイルを検索
+    # ディレクトリ内のすべての.mdファイルを検索（help.line.meを含むファイルのみ）
     md_files = []
     for root, dirs, files in os.walk(directory_path):
         for file in files:
-            if file.lower().endswith('.md'):
+            if file.lower().endswith('.md') and 'help.line.me' in file:
                 md_files.append(os.path.join(root, file))
     
-    print(f"プレビュー対象のマークダウンファイル: {len(md_files)}個")
+    print(f"プレビュー対象のhelp.line.meを含むマークダウンファイル: {len(md_files)}個")
     
     for file_path in md_files:
         try:
