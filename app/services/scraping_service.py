@@ -449,32 +449,72 @@ class ScrapingService:
             return []
     
     def _create_safe_filename(self, url: str) -> str:
-        """URLから安全なファイル名を生成"""
-        # URLからドメイン名を抽出
-        parsed = urlparse(url)
-        domain = parsed.netloc.replace('.', '_')
-        
-        # パスからファイル名を抽出
-        path = parsed.path.strip('/')
-        if path:
-            # パスの最後の部分を使用
-            filename = path.split('/')[-1]
-            if filename:
-                # 拡張子を除去
-                filename = filename.split('.')[0]
+        """URLから安全なファイル名を生成（元のURLに近い形で保存）"""
+        try:
+            # URLをパース
+            parsed = urlparse(url)
+            
+            # スキーム（http/https）を除去
+            scheme_removed = url.replace(f"{parsed.scheme}://", "")
+            
+            # ファイルシステムで使用できない文字を置換
+            # より安全で読みやすい文字に置換
+            safe_filename = scheme_removed.replace("/", "_")
+            safe_filename = safe_filename.replace("\\", "_")
+            safe_filename = safe_filename.replace(":", "_")
+            safe_filename = safe_filename.replace("*", "_")
+            safe_filename = safe_filename.replace("?", "_")
+            safe_filename = safe_filename.replace('"', "_")
+            safe_filename = safe_filename.replace("<", "_")
+            safe_filename = safe_filename.replace(">", "_")
+            safe_filename = safe_filename.replace("|", "_")
+            safe_filename = safe_filename.replace(" ", "_")
+            
+            # 連続するアンダースコアを単一のアンダースコアに置換
+            safe_filename = re.sub(r'_+', '_', safe_filename)
+            
+            # 先頭と末尾のアンダースコアを除去
+            safe_filename = safe_filename.strip('_')
+            
+            # 空文字列の場合はデフォルト名を使用
+            if not safe_filename:
+                safe_filename = "index"
+            
+            # 長すぎる場合は短縮（ファイルシステムの制限を考慮）
+            if len(safe_filename) > 200:  # より長いファイル名を許可
+                # ドメイン部分を保持し、パス部分を短縮
+                domain_part = parsed.netloc
+                path_part = parsed.path[:100]  # パス部分を100文字に制限
+                safe_filename = f"{domain_part}_{path_part}".replace("/", "_")
+                safe_filename = re.sub(r'_+', '_', safe_filename)
+                safe_filename = safe_filename.strip('_')
+            
+            # 最終的な安全チェック
+            safe_filename = re.sub(r'[^\w\-_.]', '_', safe_filename)
+            
+            logger.info(f"URL '{url}' からファイル名 '{safe_filename}.md' を生成しました")
+            return safe_filename
+            
+        except Exception as e:
+            logger.error(f"ファイル名生成でエラーが発生しました: {e}")
+            # エラーが発生した場合は従来の方法を使用
+            parsed = urlparse(url)
+            domain = parsed.netloc.replace('.', '_')
+            path = parsed.path.strip('/')
+            if path:
+                filename = path.split('/')[-1]
+                if filename:
+                    filename = filename.split('.')[0]
+                else:
+                    filename = "index"
             else:
                 filename = "index"
-        else:
-            filename = "index"
-        
-        # 安全な文字のみを使用
-        safe_filename = re.sub(r'[^\w\-_]', '_', f"{domain}_{filename}")
-        
-        # 長すぎる場合は短縮
-        if len(safe_filename) > 100:
-            safe_filename = safe_filename[:100]
-        
-        return safe_filename
+            
+            safe_filename = re.sub(r'[^\w\-_]', '_', f"{domain}_{filename}")
+            if len(safe_filename) > 100:
+                safe_filename = safe_filename[:100]
+            
+            return safe_filename
     
     def process_excel_file(self, file_path: str, task_id: str, progress_callback: Optional[Callable] = None) -> Tuple[int, int, List[str]]:
         """Excelファイルを処理してスクレイピングとマークダウン生成を実行"""
