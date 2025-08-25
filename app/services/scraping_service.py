@@ -608,11 +608,39 @@ class ScrapingService:
     def cleanup_task_files(self, task_id: str):
         """タスクに関連するファイルを削除"""
         try:
-            # タスクファイルの記録を削除
+            # タスクファイルの記録を読み込み
             task_file_path = os.path.join(self.task_files_dir, f"{task_id}.json")
             if os.path.exists(task_file_path):
-                os.remove(task_file_path)
-                logger.info(f"タスク {task_id} のファイル記録を削除しました")
+                try:
+                    with open(task_file_path, 'r', encoding='utf-8') as f:
+                        task_files = json.load(f)
+                    
+                    # 関連するマークダウンファイルを削除
+                    deleted_markdown_count = 0
+                    for file_info in task_files:
+                        file_path = file_info.get("file_path")
+                        if file_path and os.path.exists(file_path):
+                            try:
+                                os.remove(file_path)
+                                deleted_markdown_count += 1
+                                logger.info(f"マークダウンファイルを削除しました: {file_path}")
+                            except Exception as e:
+                                logger.error(f"マークダウンファイルの削除に失敗しました: {file_path} - {e}")
+                    
+                    if deleted_markdown_count > 0:
+                        logger.info(f"タスク {task_id} に関連する {deleted_markdown_count} 個のマークダウンファイルを削除しました")
+                    
+                except Exception as e:
+                    logger.error(f"タスクファイルの読み込みでエラーが発生しました: {e}")
+                
+                # タスクファイルの記録を削除
+                try:
+                    os.remove(task_file_path)
+                    logger.info(f"タスク {task_id} のファイル記録を削除しました")
+                except Exception as e:
+                    logger.error(f"タスクファイル記録の削除に失敗しました: {e}")
+            else:
+                logger.info(f"タスク {task_id} のファイル記録が見つかりませんでした")
                 
         except Exception as e:
             logger.error(f"タスクファイルクリーンアップエラー: {e}")
