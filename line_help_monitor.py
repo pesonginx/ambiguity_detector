@@ -27,13 +27,19 @@ logging.basicConfig(
 )
 
 class LineHelpMonitor:
-    def __init__(self, url, check_interval_minutes=30):
+    def __init__(self, url, check_interval_minutes=30, download_images=False):
         self.url = url
         self.check_interval_minutes = check_interval_minutes
+        self.download_images = download_images
         self.previous_hash = None
         self.previous_content = None
         self.output_dir = Path("line_help_output")
         self.output_dir.mkdir(exist_ok=True)
+        
+        # 画像保存用ディレクトリ
+        if self.download_images:
+            self.images_dir = self.output_dir / "images"
+            self.images_dir.mkdir(exist_ok=True)
         
         # ヘッダー設定（ブラウザとして認識されるように）
         self.headers = {
@@ -94,15 +100,24 @@ class LineHelpMonitor:
         soup = BeautifulSoup(html_content, 'html.parser')
         
         # 不要な要素を削除
-        for element in soup(['script', 'style', 'nav', 'footer']):
+        for element in soup(['script', 'style']):
             element.decompose()
         
         # メインコンテンツを抽出
         main_content = {
             'title': '',
+            'meta_info': {},
             'sections': [],
             'timestamp': datetime.now().isoformat()
         }
+        
+        # メタ情報を取得
+        meta_tags = soup.find_all('meta')
+        for meta in meta_tags:
+            name = meta.get('name') or meta.get('property')
+            content = meta.get('content')
+            if name and content:
+                main_content['meta_info'][name] = content
         
         # タイトルを取得
         title_elem = soup.find('title') or soup.find('h1')
@@ -122,11 +137,29 @@ class LineHelpMonitor:
             next_elem = section.find_next_sibling()
             while next_elem and next_elem.name not in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
                 if next_elem.name:
-                    section_data['content'].append({
+                    # 要素の詳細情報を取得
+                    element_data = {
                         'type': next_elem.name,
                         'text': next_elem.get_text(strip=True),
-                        'html': str(next_elem)
-                    })
+                        'html': str(next_elem),
+                        'attributes': {}
+                    }
+                    
+                    # 属性情報を保存
+                    for attr, value in next_elem.attrs.items():
+                        element_data['attributes'][attr] = value
+                    
+                    # 画像要素の特別処理
+                    if next_elem.name == 'img':
+                        element_data['image_info'] = {
+                            'src': next_elem.get('src', ''),
+                            'alt': next_elem.get('alt', ''),
+                            'title': next_elem.get('title', ''),
+                            'width': next_elem.get('width', ''),
+                            'height': next_elem.get('height', '')
+                        }
+                    
+                    section_data['content'].append(element_data)
                 next_elem = next_elem.find_next_sibling()
             
             main_content['sections'].append(section_data)
@@ -145,6 +178,13 @@ class LineHelpMonitor:
         markdown.append(f"**最終更新**: {content_data['timestamp']}\n")
         markdown.append(f"**監視URL**: {self.url}\n\n")
         
+        # メタ情報を表示
+        if content_data.get('meta_info'):
+            markdown.append("## ページ情報\n\n")
+            for name, content in content_data['meta_info'].items():
+                markdown.append(f"**{name}**: {content}\n")
+            markdown.append("\n")
+        
         # セクション
         for section in content_data['sections']:
             if section['title']:
@@ -153,21 +193,148 @@ class LineHelpMonitor:
             
             for item in section['content']:
                 if item['type'] == 'p':
-                    markdown.append(f"{item['text']}\n\n")
+                    # 段落内の画像を処理
+                    processed_text = self._process_inline_elements(item['html'])
+                    markdown.append(f"{processed_text}\n\n")
                 elif item['type'] in ['ul', 'ol']:
                     # リストの処理
                     soup = BeautifulSoup(item['html'], 'html.parser')
                     for li in soup.find_all('li'):
-                        markdown.append(f"- {li.get_text(strip=True)}\n")
+                        li_content = self._process_inline_elements(str(li))
+                        # リストマーカーを除去してテキストを取得
+                        li_text = li.get_text(strip=True)
+                        markdown.append(f"- {li_text}\n")
+                        # リスト項目内の画像があれば追加
+                        for img in li.find_all('img'):
+                            img_markdown = self._img_to_markdown(img)
+                            if img_markdown:
+                                markdown.append(f"  {img_markdown}\n")
                     markdown.append("\n")
                 elif item['type'] in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
                     level = int(item['type'][1])
                     markdown.append(f"{'#' * level} {item['text']}\n")
+                elif item['type'] == 'img':
+                    # 独立した画像要素
+                    img_markdown = self._img_to_markdown(item)
+                    if img_markdown:
+                        markdown.append(f"{img_markdown}\n\n")
+                elif item['type'] == 'div':
+                    # div要素の処理
+                    processed_text = self._process_inline_elements(item['html'])
+                    if processed_text.strip():
+                        markdown.append(f"{processed_text}\n\n")
                 else:
                     # その他の要素
-                    markdown.append(f"{item['text']}\n\n")
+                    processed_text = self._process_inline_elements(item['html'])
+                    if processed_text.strip():
+                        markdown.append(f"{processed_text}\n\n")
         
         return ''.join(markdown)
+    
+    def _process_inline_elements(self, html_content):
+        """HTML内のインライン要素（画像、リンクなど）をマークダウンに変換"""
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # 画像要素を処理
+        for img in soup.find_all('img'):
+            img_markdown = self._img_to_markdown(img)
+            if img_markdown:
+                img.replace_with(f" {img_markdown} ")
+        
+        # リンク要素を処理
+        for link in soup.find_all('a'):
+            href = link.get('href', '')
+            text = link.get_text(strip=True)
+            if href and text:
+                link_markdown = f"[{text}]({href})"
+                link.replace_with(link_markdown)
+        
+        # 太字要素を処理
+        for bold in soup.find_all(['strong', 'b']):
+            text = bold.get_text(strip=True)
+            bold.replace_with(f"**{text}**")
+        
+        # 斜体要素を処理
+        for italic in soup.find_all(['em', 'i']):
+            text = italic.get_text(strip=True)
+            italic.replace_with(f"*{text}*")
+        
+        return soup.get_text()
+    
+    def _img_to_markdown(self, img_element):
+        """画像要素をマークダウン形式に変換"""
+        if isinstance(img_element, dict) and 'image_info' in img_element:
+            # 構造化データから画像情報を取得
+            img_info = img_element['image_info']
+            src = img_info.get('src', '')
+            alt = img_info.get('alt', '')
+            title = img_info.get('title', '')
+        else:
+            # BeautifulSoup要素から画像情報を取得
+            src = img_element.get('src', '')
+            alt = img_element.get('alt', '')
+            title = img_element.get('title', '')
+        
+        if not src:
+            return ""
+        
+        # 相対URLを絶対URLに変換
+        if src.startswith('/'):
+            from urllib.parse import urljoin
+            src = urljoin(self.url, src)
+        elif src.startswith('./'):
+            from urllib.parse import urljoin
+            src = urljoin(self.url, src)
+        
+        # 画像をダウンロードする場合
+        if self.download_images:
+            local_path = self._download_image(src, alt)
+            if local_path:
+                src = str(local_path)
+        
+        # マークダウン形式で画像を出力
+        if title:
+            return f"![{alt}]({src} \"{title}\")"
+        else:
+            return f"![{alt}]({src})"
+    
+    def _download_image(self, image_url, alt_text):
+        """画像をダウンロードしてローカルに保存"""
+        try:
+            import hashlib
+            import os
+            from urllib.parse import urlparse
+            
+            # 画像URLからファイル名を生成
+            parsed_url = urlparse(image_url)
+            original_filename = os.path.basename(parsed_url.path)
+            
+            if not original_filename or '.' not in original_filename:
+                # ファイル名が取得できない場合はalt_textを使用
+                filename = f"{hashlib.md5(alt_text.encode()).hexdigest()[:8]}.jpg"
+            else:
+                filename = original_filename
+            
+            # 重複を避けるためにタイムスタンプを追加
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            name, ext = os.path.splitext(filename)
+            filename = f"{name}_{timestamp}{ext}"
+            
+            local_path = self.images_dir / filename
+            
+            # 画像をダウンロード
+            response = requests.get(image_url, headers=self.headers, timeout=30)
+            response.raise_for_status()
+            
+            with open(local_path, 'wb') as f:
+                f.write(response.content)
+            
+            logging.info(f"画像をダウンロードしました: {local_path}")
+            return local_path
+            
+        except Exception as e:
+            logging.warning(f"画像のダウンロードに失敗: {image_url} - {e}")
+            return None
     
     def check_for_changes(self):
         """変更をチェックして処理"""
@@ -219,8 +386,74 @@ class LineHelpMonitor:
         else:
             logging.info("変更は検出されませんでした")
     
+    def manual_check(self):
+        """手動実行用のチェック関数"""
+        logging.info(f"LINEヘルプセンターの手動チェックを開始: {self.url}")
+        
+        current_content = self.fetch_content()
+        if current_content is None:
+            logging.error("コンテンツの取得に失敗しました")
+            return False
+        
+        current_hash = self.calculate_hash(current_content)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 現在のコンテンツを常に保存
+        current_filename = self.output_dir / f"current_content_{timestamp}.md"
+        parsed_current = self.parse_content(current_content)
+        markdown_current = self.content_to_markdown(parsed_current)
+        
+        with open(current_filename, 'w', encoding='utf-8') as f:
+            f.write(markdown_current)
+        
+        logging.info(f"現在のコンテンツを保存しました: {current_filename}")
+        
+        if self.previous_hash is None:
+            logging.info("初回実行のため、現在のコンテンツを基準として保存します")
+            self.previous_hash = current_hash
+            self.previous_content = current_content
+            self.save_state()
+            return True
+        
+        if current_hash != self.previous_hash:
+            logging.info("コンテンツの変更を検出しました！")
+            
+            # 前回のコンテンツも保存（変更があった場合）
+            if self.previous_content:
+                previous_filename = self.output_dir / f"previous_content_{timestamp}.md"
+                parsed_previous = self.parse_content(self.previous_content)
+                markdown_previous = self.content_to_markdown(parsed_previous)
+                
+                with open(previous_filename, 'w', encoding='utf-8') as f:
+                    f.write(markdown_previous)
+                
+                logging.info(f"前回のコンテンツを保存しました: {previous_filename}")
+            
+            # 差分情報を保存
+            diff_filename = self.output_dir / f"diff_{timestamp}.txt"
+            with open(diff_filename, 'w', encoding='utf-8') as f:
+                f.write(f"変更検出時刻: {datetime.now().isoformat()}\n")
+                f.write(f"前回ハッシュ: {self.previous_hash}\n")
+                f.write(f"現在ハッシュ: {current_hash}\n")
+                f.write(f"URL: {self.url}\n")
+                f.write(f"前回コンテンツファイル: {previous_filename if self.previous_content else 'なし'}\n")
+                f.write(f"現在コンテンツファイル: {current_filename}\n")
+            
+            logging.info(f"差分情報を保存しました: {diff_filename}")
+            
+            # 状態を更新
+            self.previous_hash = current_hash
+            self.previous_content = current_content
+            self.save_state()
+            
+            return True
+            
+        else:
+            logging.info("変更は検出されませんでした")
+            return False
+    
     def start_monitoring(self):
-        """監視を開始"""
+        """監視を開始（スケジューラー使用）"""
         logging.info(f"LINEヘルプセンター監視を開始します（間隔: {self.check_interval_minutes}分）")
         
         # 初回実行
@@ -265,7 +498,11 @@ def main():
         logging.error("設定の読み込みに失敗しました。プログラムを終了します。")
         return
     
-    monitor = LineHelpMonitor(config["url"], config["check_interval_minutes"])
+    monitor = LineHelpMonitor(
+        config["url"], 
+        config["check_interval_minutes"],
+        config.get("download_images", False)
+    )
     monitor.start_monitoring()
 
 if __name__ == "__main__":
