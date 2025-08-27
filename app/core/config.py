@@ -16,5 +16,6 @@ class Settings:
     # 出力設定
     OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "app/static/markdown")
     TASK_FILES_DIR: str = os.getenv("TASK_FILES_DIR", "app/static/task_files")
+    STATIC_DIR: str = os.getenv("STATIC_DIR", "app/static")
 
 settings = Settings()

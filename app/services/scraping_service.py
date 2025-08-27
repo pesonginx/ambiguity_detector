@@ -42,9 +42,87 @@ class ScrapingService:
         self.wait = None
         self.html2text_converter = None
         
+        # アイコンマッピングの初期化
+        self.icon_mapping = {}
+        
         # 初期化
         self.setup_driver()
         self.setup_html2text()
+        self.load_icon_mapping()
+    
+    def load_icon_mapping(self):
+        """アイコンファイル名とアイコン説明のマッピングを読み込む"""
+        try:
+            icon_list_path = os.path.join(settings.STATIC_DIR, "icon_list", "icon_list.xlsx")
+            if os.path.exists(icon_list_path):
+                # Excelファイルを読み込み
+                df = pd.read_excel(icon_list_path)
+                
+                # 必要な列が存在するかチェック
+                required_columns = ["アイコンファイル名", "アイコン説明"]
+                missing_columns = [col for col in required_columns if col not in df.columns]
+                
+                if missing_columns:
+                    logger.warning(f"アイコン一覧に必要な列が見つかりません: {missing_columns}")
+                    return
+                
+                # アイコンファイル名とアイコン説明のマッピングを作成
+                for _, row in df.iterrows():
+                    icon_filename = str(row["アイコンファイル名"]).strip()
+                    icon_description = str(row["アイコン説明"]).strip()
+                    
+                    # 空の値はスキップ
+                    if icon_filename and icon_description:
+                        # .png拡張子がある場合はそのまま、ない場合は追加
+                        if not icon_filename.endswith('.png'):
+                            icon_filename += '.png'
+                        self.icon_mapping[icon_filename] = icon_description
+                
+                logger.info(f"アイコン一覧を読み込みました: {len(self.icon_mapping)}件")
+            else:
+                logger.info("アイコン一覧ファイルが見つかりません: {icon_list_path}")
+                
+        except Exception as e:
+            logger.error(f"アイコン一覧の読み込みでエラーが発生しました: {e}")
+    
+    def replace_icon_references(self, content: str) -> str:
+        """コンテンツ中のアイコン名を含む画像URLをアイコン説明に変更する"""
+        if not self.icon_mapping:
+            return content
+        
+        try:
+            # 正規表現パターン: ![任意の文字列](http*/アイコンファイル名)
+            # キャプチャグループを使用して置換対象を特定
+            pattern = r'!\[([^\]]*)\]\([^)]*/([^)]+)\)'
+            
+            def replacement_function(match):
+                alt_text = match.group(1)  # ![と]の間の文字列
+                icon_filename = match.group(2)  # (と)の間の最後の部分（ファイル名）
+                
+                # アイコンファイル名がマッピングに存在するかチェック
+                if icon_filename in self.icon_mapping:
+                    logger.debug(f"アイコン参照を置換: {icon_filename} -> {self.icon_mapping[icon_filename]}")
+                    return self.icon_mapping[icon_filename]
+                else:
+                    # マッピングに存在しない場合は元の文字列をそのまま返す
+                    return match.group(0)
+            
+            # 置換を実行
+            replaced_content = re.sub(pattern, replacement_function, content)
+            
+            return replaced_content
+            
+        except Exception as e:
+            logger.error(f"アイコン参照の置換でエラーが発生しました: {e}")
+            return content
+    
+    def get_icon_mapping_info(self) -> Dict[str, str]:
+        """現在読み込まれているアイコンマッピングの情報を取得（デバッグ用）"""
+        return self.icon_mapping.copy()
+    
+    def test_icon_replacement(self, test_content: str) -> str:
+        """アイコン置換処理のテスト用メソッド"""
+        return self.replace_icon_references(test_content)
     
     def setup_driver(self):
         """Chrome WebDriverの設定"""
@@ -298,7 +376,11 @@ class ScrapingService:
             elif not in_table:
                 processed_lines.append(line)
 
-        return "\n".join(processed_lines)
+        # マークダウン変換後にアイコン参照を置換
+        markdown_content = "\n".join(processed_lines)
+        markdown_content = self.replace_icon_references(markdown_content)
+
+        return markdown_content
     
     def scrape_url(self, url: str) -> Dict[str, str]:
         """指定されたURLをスクレイピングする"""
