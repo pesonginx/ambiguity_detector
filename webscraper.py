@@ -8,6 +8,9 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from bs4 import BeautifulSoup
 import html2text
+import pandas as pd
+import os
+from datetime import datetime
 
 from app.core.config import settings
 
@@ -283,3 +286,131 @@ class WebScraperClient:
 
     def __exit__(self, exc_type: Optional[type], exc_val: Optional[Exception], exc_tb: Optional[object]) -> None:
         self.close()
+
+
+def main():
+    """
+    ExcelファイルのURL列からURLを読み込んで順次スクレイピング処理を行う
+    """
+    # 入力ファイルのパス
+    input_file = "input.xlsx"
+    
+    # 出力ディレクトリの作成
+    output_dir = "scraped_content"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 結果を保存するリスト
+    results = []
+    
+    try:
+        # Excelファイルを読み込み
+        print(f"Excelファイル '{input_file}' を読み込んでいます...")
+        df = pd.read_excel(input_file)
+        
+        # URL列の存在確認
+        if 'url' not in df.columns:
+            print("エラー: 'url'列が見つかりません。列名を確認してください。")
+            return
+        
+        # URLの数を表示
+        url_count = len(df['url'].dropna())
+        print(f"処理対象のURL数: {url_count}")
+        
+        # WebScraperClientの初期化
+        with WebScraperClient(headless=True, wait_time=10) as scraper:
+            for index, row in df.iterrows():
+                url = row['url']
+                
+                # URLが空の場合はスキップ
+                if pd.isna(url) or url.strip() == '':
+                    print(f"行 {index + 1}: URLが空のためスキップ")
+                    continue
+                
+                print(f"\n行 {index + 1}/{url_count}: {url} を処理中...")
+                
+                try:
+                    # スクレイピング実行
+                    result = scraper.scrape_url(url)
+                    
+                    # 結果を保存
+                    result_data = {
+                        'row_index': index + 1,
+                        'url': url,
+                        'success': result['success'],
+                        'error': result['error'],
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    results.append(result_data)
+                    
+                    if result['success']:
+                        print(f"✓ 成功: コンテンツを取得しました")
+                        
+                        # マークダウンファイルとして保存
+                        filename = f"scraped_{index + 1:03d}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                        filepath = os.path.join(output_dir, filename)
+                        
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(f"# スクレイピング結果\n\n")
+                            f.write(f"**URL:** {url}\n\n")
+                            f.write(f"**取得日時:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                            f.write(f"---\n\n")
+                            f.write(result['content'])
+                        
+                        print(f"  ファイル保存: {filepath}")
+                        result_data['output_file'] = filepath
+                        
+                    else:
+                        print(f"✗ 失敗: {result['error']}")
+                        result_data['output_file'] = None
+                        
+                except Exception as e:
+                    error_msg = f"処理中にエラーが発生: {str(e)}"
+                    print(f"✗ エラー: {error_msg}")
+                    
+                    result_data = {
+                        'row_index': index + 1,
+                        'url': url,
+                        'success': False,
+                        'error': error_msg,
+                        'timestamp': datetime.now().isoformat(),
+                        'output_file': None
+                    }
+                    results.append(result_data)
+                
+                # 処理間隔を設ける（サーバーに負荷をかけないため）
+                time.sleep(2)
+        
+        # 結果サマリーの表示
+        print(f"\n{'='*50}")
+        print("処理完了サマリー")
+        print(f"{'='*50}")
+        
+        success_count = sum(1 for r in results if r['success'])
+        error_count = len(results) - success_count
+        
+        print(f"総処理数: {len(results)}")
+        print(f"成功: {success_count}")
+        print(f"失敗: {error_count}")
+        print(f"成功率: {success_count/len(results)*100:.1f}%" if results else "0%")
+        
+        # 結果をExcelファイルとして保存
+        results_df = pd.DataFrame(results)
+        output_excel = f"scraping_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        results_df.to_excel(output_excel, index=False)
+        print(f"\n結果を '{output_excel}' に保存しました")
+        
+        # 失敗したURLの一覧表示
+        if error_count > 0:
+            print(f"\n失敗したURL:")
+            for result in results:
+                if not result['success']:
+                    print(f"  - {result['url']} (エラー: {result['error']})")
+        
+    except FileNotFoundError:
+        print(f"エラー: ファイル '{input_file}' が見つかりません。")
+    except Exception as e:
+        print(f"予期しないエラーが発生しました: {str(e)}")
+
+
+if __name__ == "__main__":
+    main()
