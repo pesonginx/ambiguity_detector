@@ -43,11 +43,13 @@ class ScrapingService:
         self.html2text_converter = None
         
         # 初期化
-        self.setup_driver()
         self.setup_html2text()
     
     def setup_driver(self):
         """Chrome WebDriverの設定"""
+        if self.driver is not None:
+            return  # 既に初期化済み
+        
         try:
             options = Options()
             if self.headless:
@@ -193,6 +195,10 @@ class ScrapingService:
     def extract_content(self, url: str) -> Optional[BeautifulSoup]:
         """ウェブページから内容を抽出する"""
         try:
+            # WebDriverが必要な時だけ初期化
+            if self.driver is None:
+                self.setup_driver()
+            
             logger.info(f"アクセス中: {url}")
             self.driver.get(url)
             time.sleep(3)  # Wait for page to load
