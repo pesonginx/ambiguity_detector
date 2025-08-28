@@ -1,7 +1,7 @@
 import re
 import time
 from typing import Tuple, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -288,6 +288,44 @@ class WebScraperClient:
         self.close()
 
 
+def create_safe_filename(url: str, index: int) -> str:
+    """
+    URLから安全なファイル名を生成する
+    """
+    try:
+        # URLをパース
+        parsed = urlparse(url)
+        
+        # ドメイン名を取得
+        domain = parsed.netloc.replace('www.', '').replace('.', '_')
+        
+        # パスからファイル名部分を取得
+        path = parsed.path.strip('/')
+        if path:
+            # パスを安全な文字に変換
+            safe_path = re.sub(r'[^\w\-_.]', '_', path)
+            # 長すぎる場合は短縮
+            if len(safe_path) > 50:
+                safe_path = safe_path[:50]
+        else:
+            safe_path = "index"
+        
+        # タイムスタンプ
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # ファイル名を組み立て
+        filename = f"{domain}_{safe_path}_{timestamp}.md"
+        
+        # ファイル名が長すぎる場合は短縮
+        if len(filename) > 200:
+            filename = f"{domain}_{index:03d}_{timestamp}.md"
+        
+        return filename
+    except Exception:
+        # エラーの場合はフォールバック
+        return f"scraped_{index:03d}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+
+
 def main():
     """
     ExcelファイルのURL列からURLを読み込んで順次スクレイピング処理を行う
@@ -376,15 +414,14 @@ def main():
                     if result['success']:
                         print(f"✓ 成功: コンテンツを取得しました")
                         
-                        # マークダウンファイルとして保存
-                        filename = f"scraped_{index + 1:03d}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                        # URLベースのファイル名を生成
+                        filename = create_safe_filename(url, index + 1)
                         filepath = os.path.join(output_dir, filename)
                         
                         with open(filepath, 'w', encoding='utf-8') as f:
                             f.write(f"# スクレイピング結果\n\n")
                             f.write(f"**URL:** {url}\n\n")
                             f.write(f"**取得日時:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                            f.write(f"**処理方法:** {'HTML列から直接処理' if url.startswith('https://guide.line.me/') else 'スクレイピング'}\n\n")
                             f.write(f"---\n\n")
                             f.write(result['content'])
                         
