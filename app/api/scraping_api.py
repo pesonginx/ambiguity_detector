@@ -62,12 +62,14 @@ async def upload_excel_file(
         )
         
         # バックグラウンドでスクレイピング処理を実行
+        logger.info(f"バックグラウンドタスクを開始します: {task_id}")
         background_tasks.add_task(
             process_scraping_task,
             task_id,
             temp_file_path,
             description
         )
+        logger.info(f"タスク {task_id} をバックグラウンド処理キューに追加しました")
         
         return ScrapingResponse(
             success=True,
@@ -84,10 +86,16 @@ async def upload_excel_file(
 @router.get("/status/{task_id}", response_model=ScrapingStatus)
 async def get_scraping_status(task_id: str):
     """スクレイピング処理の状態を取得"""
+    logger.info(f"タスク状態取得要求: {task_id}")
+    
     if task_id not in task_status:
+        logger.warning(f"タスクが見つかりません: {task_id}. 登録済みタスク: {list(task_status.keys())}")
         raise HTTPException(status_code=404, detail="タスクが見つかりません")
     
-    return task_status[task_id]
+    status = task_status[task_id]
+    logger.info(f"タスク {task_id} 状態: {status.status}, 進捗: {status.progress:.1%}, メッセージ: {status.message}")
+    
+    return status
 
 @router.get("/files/{task_id}", response_model=TaskFilesResponse)
 async def list_markdown_files(task_id: str):
@@ -250,12 +258,16 @@ def update_task_progress(task_id: str, progress: float, processed_urls: int, tot
         task_status[task_id].message = message
         task_status[task_id].updated_at = datetime.now()
         logger.info(f"タスク {task_id} 進捗更新: {progress:.1%} ({processed_urls}/{total_urls}) - {message}")
+    else:
+        logger.warning(f"タスクID {task_id} が見つかりません")
 
 async def process_scraping_task(task_id: str, file_path: str, description: str = None):
     """バックグラウンドでスクレイピング処理を実行"""
+    logger.info(f"バックグラウンドタスク開始: {task_id}")
     scraping_service = None
     try:
         # タスクの状態を更新
+        logger.info(f"タスク {task_id} の状態を 'processing' に更新します")
         task_status[task_id].status = "processing"
         task_status[task_id].message = "スクレイピング処理を開始しました"
         task_status[task_id].updated_at = datetime.now()
