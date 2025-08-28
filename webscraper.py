@@ -312,6 +312,10 @@ def main():
             print("エラー: 'url'列が見つかりません。列名を確認してください。")
             return
         
+        # html列の存在確認
+        if 'html' not in df.columns:
+            print("警告: 'html'列が見つかりません。guide.line.meのURLの場合はHTMLコンテンツを取得できません。")
+        
         # URLの数を表示
         url_count = len(df['url'].dropna())
         print(f"処理対象のURL数: {url_count}")
@@ -329,8 +333,35 @@ def main():
                 print(f"\n行 {index + 1}/{url_count}: {url} を処理中...")
                 
                 try:
-                    # スクレイピング実行
-                    result = scraper.scrape_url(url)
+                    # guide.line.meのURLの場合は、HTML列から直接処理
+                    if url.startswith("https://guide.line.me/"):
+                        print("  guide.line.meのURLを検出 - HTML列から直接処理します")
+                        
+                        # HTML列の存在確認
+                        if 'html' in df.columns and not pd.isna(row['html']):
+                            html_content = row['html']
+                            print(f"  HTML列からコンテンツを読み込みました（長さ: {len(html_content)}文字）")
+                            
+                            # HTMLをBeautifulSoupでパース
+                            soup = BeautifulSoup(html_content, "lxml")
+                            
+                            # 不要要素の除去
+                            soup = scraper.remove_unwanted_elements(soup)
+                            
+                            # マークダウン化
+                            markdown_content = scraper.convert_to_markdown(soup, url)
+                            
+                            result = {
+                                'success': True,
+                                'content': markdown_content,
+                                'error': None
+                            }
+                        else:
+                            print("  HTML列が空または存在しないため、スクレイピングを実行します")
+                            result = scraper.scrape_url(url)
+                    else:
+                        # 通常のスクレイピング処理
+                        result = scraper.scrape_url(url)
                     
                     # 結果を保存
                     result_data = {
@@ -353,6 +384,7 @@ def main():
                             f.write(f"# スクレイピング結果\n\n")
                             f.write(f"**URL:** {url}\n\n")
                             f.write(f"**取得日時:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                            f.write(f"**処理方法:** {'HTML列から直接処理' if url.startswith('https://guide.line.me/') else 'スクレイピング'}\n\n")
                             f.write(f"---\n\n")
                             f.write(result['content'])
                         
