@@ -33,7 +33,10 @@ def run(cmd, cwd=None, check=True):
             f"Command failed ({proc.returncode}): {' '.join(cmd)}\n"
             f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
         )
-    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    # None チェックを追加して安全に strip() を実行
+    stdout = proc.stdout.strip() if proc.stdout is not None else ""
+    stderr = proc.stderr.strip() if proc.stderr is not None else ""
+    return proc.returncode, stdout, stderr
 
 
 def ensure_repo(repo_url: str, branch: str, workdir: str):
