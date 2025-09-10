@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 import requests
 from dotenv import load_dotenv
 from git import Repo, GitCommandError
+import random
+import glob
 
 # .envファイルを読み込み
 load_dotenv()
@@ -70,11 +72,43 @@ def ensure_repo(repo_url: str, branch: str, workdir: str):
                 raise RuntimeError(f"'{workdir}' は空でない非リポジトリです。")
 
 
-# ① ダミー：追加・削除の実処理はここに書く想定（今回は何もしない）
 def apply_file_changes(workdir: str):
-    # ここにファイル生成/削除/同期などの処理を実装できる
-    # 今回はダミー
-    pass
+    """
+    ./workdir/index/content内のJSONファイルをランダムに削除する処理
+    """
+    content_dir = os.path.join(workdir, "index", "content")
+    
+    if not os.path.exists(content_dir):
+        print(f"ディレクトリが存在しません: {content_dir}")
+        return
+    
+    # JSONファイルを検索
+    json_files = glob.glob(os.path.join(content_dir, "*.json"))
+    
+    if not json_files:
+        print(f"JSONファイルが見つかりません: {content_dir}")
+        return
+    
+    print(f"見つかったJSONファイル数: {len(json_files)}")
+    
+    # ランダムに削除するファイル数を決定（1-3個、または全ファイルの50%以下）
+    max_delete = min(3, len(json_files) // 2) if len(json_files) > 1 else 1
+    delete_count = random.randint(1, max_delete)
+    
+    # ランダムにファイルを選択
+    files_to_delete = random.sample(json_files, delete_count)
+    
+    print(f"削除予定のファイル数: {delete_count}")
+    
+    # ファイルを削除
+    for file_path in files_to_delete:
+        try:
+            os.remove(file_path)
+            print(f"削除完了: {os.path.basename(file_path)}")
+        except OSError as e:
+            print(f"削除エラー: {file_path} - {e}")
+    
+    print(f"ファイル削除処理完了: {delete_count}個のファイルを削除")
 
 
 # ② 追加・削除をまとめて拾う: GitPythonを使用
