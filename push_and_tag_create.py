@@ -1,12 +1,12 @@
 import os
 import re
-import subprocess
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
+from git import Repo, GitCommandError
 
 # .envファイルを読み込み
 load_dotenv()
@@ -32,28 +32,6 @@ HTTPS_PROXY = os.getenv('HTTPS_PROXY')
 TAG_PATTERN = re.compile(r"^(\d{3})-(\d{8})$")
 
 
-def run(cmd, cwd=None, check=True):
-    # プロキシ設定を環境変数に追加
-    env = os.environ.copy()
-    if HTTP_PROXY:
-        env['HTTP_PROXY'] = HTTP_PROXY
-    if HTTPS_PROXY:
-        env['HTTPS_PROXY'] = HTTPS_PROXY
-    
-    proc = subprocess.run(
-        cmd, cwd=cwd, text=True, capture_output=True, check=False, env=env
-    )
-    if check and proc.returncode != 0:
-        raise RuntimeError(
-            f"Command failed ({proc.returncode}): {' '.join(cmd)}\n"
-            f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
-        )
-    # None チェックを追加して安全に strip() を実行
-    stdout = proc.stdout.strip() if proc.stdout is not None else ""
-    stderr = proc.stderr.strip() if proc.stderr is not None else ""
-    return proc.returncode, stdout, stderr
-
-
 def ensure_repo(repo_url: str, branch: str, workdir: str):
     """
     手元のクローンを優先使用。無ければclone。あればfetch/checkoutで最新化。
@@ -61,23 +39,33 @@ def ensure_repo(repo_url: str, branch: str, workdir: str):
     if not os.path.isdir(workdir):
         parent = os.path.dirname(os.path.abspath(workdir)) or "."
         os.makedirs(parent, exist_ok=True)
-        run(["git", "clone", "--branch", branch, "--single-branch", repo_url, workdir])
+        print(f"クローン中: {repo_url} -> {workdir}")
+        Repo.clone_from(repo_url, workdir, branch=branch, single_branch=True)
     else:
         git_dir = os.path.join(workdir, ".git")
         if os.path.isdir(git_dir):
-            run(["git", "fetch", "origin", branch], cwd=workdir)
-            rc, _, _ = run(["git", "rev-parse", "--verify", branch], cwd=workdir, check=False)
-            if rc != 0:
-                run(["git", "checkout", "-b", branch, f"origin/{branch}"], cwd=workdir)
-            else:
-                run(["git", "checkout", branch], cwd=workdir)
-                run(["git", "reset", "--hard", f"origin/{branch}"], cwd=workdir)
+            repo = Repo(workdir)
+            print(f"リポジトリを最新化中: {workdir}")
+            
+            # リモートから最新を取得
+            origin = repo.remotes.origin
+            origin.fetch()
+            
+            # ブランチの存在確認と切り替え
+            try:
+                repo.git.checkout(branch)
+                # リモートブランチにリセット
+                repo.git.reset('--hard', f'origin/{branch}')
+            except GitCommandError:
+                # ブランチが存在しない場合は作成
+                repo.git.checkout('-b', branch, f'origin/{branch}')
         else:
             if not os.listdir(workdir):
-                run(["git", "init"], cwd=workdir)
-                run(["git", "remote", "add", "origin", repo_url], cwd=workdir)
-                run(["git", "fetch", "origin", branch], cwd=workdir)
-                run(["git", "checkout", "-b", branch, f"origin/{branch}"], cwd=workdir)
+                print(f"新しいリポジトリを初期化中: {workdir}")
+                repo = Repo.init(workdir)
+                origin = repo.create_remote('origin', repo_url)
+                origin.fetch()
+                repo.git.checkout('-b', branch, f'origin/{branch}')
             else:
                 raise RuntimeError(f"'{workdir}' は空でない非リポジトリです。")
 
@@ -89,21 +77,63 @@ def apply_file_changes(workdir: str):
     pass
 
 
-# ② 追加・削除をまとめて拾う: git add -A を使用
+# ② 追加・削除をまとめて拾う: GitPythonを使用
 def stage_commit_push(workdir: str, target_path: str, branch: str, message: str):
+    """
+    GitPythonを使用してステージング、コミット、プッシュを実行
+    """
+    repo = Repo(workdir)
+    
+    # ブランチに切り替え
+    print(f"ブランチ '{branch}' に切り替え中...")
+    repo.git.checkout(branch)
+    
+    # プロキシ設定を環境変数に設定
+    env = os.environ.copy()
+    if HTTP_PROXY:
+        env['HTTP_PROXY'] = HTTP_PROXY
+    if HTTPS_PROXY:
+        env['HTTPS_PROXY'] = HTTPS_PROXY
+    
+    # プロキシ設定をGitに適用
+    if HTTP_PROXY or HTTPS_PROXY:
+        if HTTP_PROXY:
+            repo.config_writer().set_value("http", "proxy", HTTP_PROXY).release()
+        if HTTPS_PROXY:
+            repo.config_writer().set_value("https", "proxy", HTTPS_PROXY).release()
+    
+    # 変更をステージング
     target = (target_path or ".").strip().strip("/")
-    run(["git", "checkout", branch], cwd=workdir)
-
-    # 追加・変更・削除を全てステージ
-    run(["git", "add", "-A", target if target else "."], cwd=workdir)
-
-    rc, out, _ = run(["git", "diff", "--cached", "--name-only"], cwd=workdir, check=False)
-    if out.strip():
-        run(["git", "commit", "-m", message], cwd=workdir)
-        run(["git", "push", "origin", branch], cwd=workdir)
+    print(f"変更をステージング中: {target}")
+    
+    # 全ての変更をステージング（追加・変更・削除）
+    repo.git.add('-A', target if target else ".")
+    
+    # ステージングされた変更を確認
+    staged_files = repo.index.diff("HEAD")
+    if staged_files:
+        print(f"ステージングされたファイル数: {len(staged_files)}")
+        for item in staged_files:
+            print(f"  - {item.a_path}")
+        
+        # コミット
+        print(f"コミット中: {message}")
+        repo.index.commit(message)
+        
+        # プッシュ
+        print(f"プッシュ中: origin/{branch}")
+        origin = repo.remotes.origin
+        origin.push(branch)
+        print("プッシュ完了")
     else:
+        print("ステージングする変更がありません")
         # 変更がなくても一応 push 試行（no-op）
-        run(["git", "push", "origin", branch], cwd=workdir, check=False)
+        try:
+            origin = repo.remotes.origin
+            origin.push(branch)
+            print("プッシュ完了（変更なし）")
+        except GitCommandError as e:
+            print(f"プッシュスキップ: {e}")
 
 
 def iter_tags(api_base: str, project_id: str, token: str, per_page: int = 100):
