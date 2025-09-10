@@ -6,6 +6,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests
+from dotenv import load_dotenv
+
+# .envファイルを読み込み
+load_dotenv()
 
 # ===== 固定設定 =====
 REPO_URL = "git@gitlab.com:your-group/your-repo.git"
@@ -18,6 +22,10 @@ TARGET_PATH = "."                      # push対象(リポジトリ内相対)。
 COMMIT_MESSAGE = "chore: update files"
 TIMEZONE = "Asia/Tokyo"
 TAG_MESSAGE = "auto tag"
+
+# プロキシ設定（.envから取得）
+HTTP_PROXY = os.getenv('HTTP_PROXY')
+HTTPS_PROXY = os.getenv('HTTPS_PROXY')
 # ===================
 
 # タグ形式: NNN-YYYYMMDD（例: 008-20250904）
@@ -25,8 +33,15 @@ TAG_PATTERN = re.compile(r"^(\d{3})-(\d{8})$")
 
 
 def run(cmd, cwd=None, check=True):
+    # プロキシ設定を環境変数に追加
+    env = os.environ.copy()
+    if HTTP_PROXY:
+        env['HTTP_PROXY'] = HTTP_PROXY
+    if HTTPS_PROXY:
+        env['HTTPS_PROXY'] = HTTPS_PROXY
+    
     proc = subprocess.run(
-        cmd, cwd=cwd, text=True, capture_output=True, check=False
+        cmd, cwd=cwd, text=True, capture_output=True, check=False, env=env
     )
     if check and proc.returncode != 0:
         raise RuntimeError(
@@ -93,11 +108,19 @@ def stage_commit_push(workdir: str, target_path: str, branch: str, message: str)
 
 def iter_tags(api_base: str, project_id: str, token: str, per_page: int = 100):
     headers = {"PRIVATE-TOKEN": token}
+    
+    # プロキシ設定
+    proxies = {}
+    if HTTP_PROXY:
+        proxies['http'] = HTTP_PROXY
+    if HTTPS_PROXY:
+        proxies['https'] = HTTPS_PROXY
+    
     page = 1
     while True:
         url = f"{api_base}/projects/{project_id}/repository/tags"
         params = {"order_by": "updated", "sort": "desc", "per_page": per_page, "page": page}
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        resp = requests.get(url, headers=headers, params=params, proxies=proxies, timeout=30)
         resp.raise_for_status()
         batch = resp.json()
         if not batch:
@@ -138,11 +161,19 @@ def build_next_tag(max_seq: int, tz_name: str = "Asia/Tokyo") -> str:
 
 def create_tag(api_base: str, project_id: str, token: str, tag_name: str, ref: str, message: str | None = None):
     headers = {"PRIVATE-TOKEN": token}
+    
+    # プロキシ設定
+    proxies = {}
+    if HTTP_PROXY:
+        proxies['http'] = HTTP_PROXY
+    if HTTPS_PROXY:
+        proxies['https'] = HTTPS_PROXY
+    
     url = f"{api_base}/projects/{project_id}/repository/tags"
     payload = {"tag_name": tag_name, "ref": ref}
     if message:
         payload["message"] = message
-    resp = requests.post(url, headers=headers, data=payload, timeout=30)
+    resp = requests.post(url, headers=headers, data=payload, proxies=proxies, timeout=30)
     # 重複タグ（already exists）は成功扱いで返す
     if resp.status_code == 400 and "already exists" in resp.text:
         return
