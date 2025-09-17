@@ -104,6 +104,16 @@ def main():
     """メイン処理"""
     s = requests.Session()
     
+    # セッションをクリーンに初期化
+    s.auth = None
+    s.proxies = {}
+    s.verify = VERIFY_SSL
+    
+    # 環境変数のプロキシ設定を一時的に無効化
+    import os
+    original_http_proxy = os.environ.pop('HTTP_PROXY', None)
+    original_https_proxy = os.environ.pop('HTTPS_PROXY', None)
+    
     try:
         # 1) Jenkinsビルドをトリガー
         queue_url = trigger_jenkins_build(s, PARAMS)
@@ -121,6 +131,12 @@ def main():
             
     except Exception as e:
         print(f"❌ Error: {e}")
+    finally:
+        # 環境変数を復元
+        if original_http_proxy:
+            os.environ['HTTP_PROXY'] = original_http_proxy
+        if original_https_proxy:
+            os.environ['HTTPS_PROXY'] = original_https_proxy
 
 if __name__ == "__main__":
     main()
