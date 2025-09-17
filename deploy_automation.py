@@ -136,9 +136,17 @@ def build_n8n_payload() -> Dict[str, str]:
         m = TAG_PATTERN.match(tag)
         return m.group(1) if m else ""
     
+    def extract_tag_date(tag: str) -> str:
+        if not tag:
+            return ""
+        m = TAG_PATTERN.match(tag)
+        return m.group(2) if m else ""
+    
     return {
         "newTag":   extract_tag_number(PARAMS["NEW_TAG"]),
         "oldTag":   extract_tag_number(PARAMS["OLD_TAG"]),
+        "newTagDate": extract_tag_date(PARAMS["NEW_TAG"]),
+        "oldTagDate": extract_tag_date(PARAMS["OLD_TAG"]),
         "gitUser":  PARAMS["GIT_USER"] + "@gmail.com",
         "gitToken": PARAMS["GIT_TOKEN"],
         "workEnv":  PARAMS["WORK_ENV"],
@@ -280,17 +288,28 @@ def iter_tags(api_base: str, project_id: str, token: str, per_page: int = 100):
 def get_max_seq_from_tags(api_base: str, project_id: str, token: str) -> int:
     """
     既存タグ NNN-YYYYMMDD の NNN 最大値を返す。
+    initial-tagのみの場合は 0 を返す。
     一致が無ければ 0。
     """
     max_seq = 0
+    has_valid_tags = False
+    
     for name in iter_tags(api_base, project_id, token):
+        # initial-tagは無視
+        if name == "initial-tag":
+            continue
+            
         m = TAG_PATTERN.match(name)
         if not m:
             continue
+            
+        has_valid_tags = True
         seq = int(m.group(1))
         if seq > max_seq:
             max_seq = seq
-    return max_seq
+    
+    # 有効なタグがない場合（initial-tagのみの場合）は0を返す
+    return max_seq if has_valid_tags else 0
 
 def build_next_tag(max_seq: int, tz_name: str = "Asia/Tokyo") -> str:
     """
@@ -346,6 +365,10 @@ def get_latest_tag_from_git() -> str:
     """Git上の最新タグ（NNN-YYYYMMDD形式）を取得"""
     latest_tag = ""
     for name in iter_tags(API_BASE, PROJECT_ID, GIT_TOKEN):
+        # initial-tagは無視
+        if name == "initial-tag":
+            continue
+            
         m = TAG_PATTERN.match(name)
         if m:
             latest_tag = name
