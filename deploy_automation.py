@@ -38,7 +38,6 @@ TAG_MESSAGE = os.getenv("TAG_MESSAGE", "auto tag")
 # プロキシ設定
 HTTP_PROXY = os.getenv('HTTP_PROXY')
 HTTPS_PROXY = os.getenv('HTTPS_PROXY')
-PROXY_CERT = os.getenv('REQUESTS_CA_BUNDLE', '')  # .pemファイルのパス
 
 # タグ情報保存ファイル
 TAG_INFO_FILE = "tag_info.json"
@@ -88,18 +87,7 @@ def jenkins_url(path: str) -> str:
 
 def trigger_jenkins_build(session: requests.Session, params: Dict[str, str]) -> str:
     url = jenkins_url(f"{JENKINS_JOB}/buildWithParameters")
-    
-    # プロキシ設定
-    proxies = {}
-    if HTTP_PROXY:
-        proxies['http'] = HTTP_PROXY
-    if HTTPS_PROXY:
-        proxies['https'] = HTTPS_PROXY
-    
-    # 証明書設定
-    cert = PROXY_CERT if PROXY_CERT else None
-    
-    r = session.post(url, params=params, proxies=proxies, cert=cert,
+    r = session.post(url, params=params,
                      allow_redirects=False, timeout=TIMEOUT, verify=VERIFY_SSL)
     r.raise_for_status()
     queue_url = r.headers.get("Location")
@@ -111,19 +99,8 @@ def trigger_jenkins_build(session: requests.Session, params: Dict[str, str]) -> 
 def resolve_queue_to_build(session: requests.Session, queue_url: str, wait_sec: int) -> str:
     api = queue_url.rstrip("/") + "/api/json"
     deadline = time.time() + wait_sec
-    
-    # プロキシ設定
-    proxies = {}
-    if HTTP_PROXY:
-        proxies['http'] = HTTP_PROXY
-    if HTTPS_PROXY:
-        proxies['https'] = HTTPS_PROXY
-    
-    # 証明書設定
-    cert = PROXY_CERT if PROXY_CERT else None
-    
     while time.time() < deadline:
-        q = session.get(api, proxies=proxies, cert=cert, timeout=TIMEOUT, verify=VERIFY_SSL)
+        q = session.get(api, timeout=TIMEOUT, verify=VERIFY_SSL)
         q.raise_for_status()
         data = q.json()
         if data.get("cancelled"):
@@ -139,16 +116,8 @@ def resolve_queue_to_build(session: requests.Session, queue_url: str, wait_sec: 
 def wait_for_build_result(session: requests.Session, build_url: str, wait_sec: int) -> str:
     api = build_url.rstrip("/") + "/api/json"
     deadline = time.time() + wait_sec
-    
-    # プロキシ設定
-    proxies = {}
-    if HTTP_PROXY:
-        proxies['http'] = HTTP_PROXY
-    if HTTPS_PROXY:
-        proxies['https'] = HTTPS_PROXY
-    
     while time.time() < deadline:
-        r = session.get(api, proxies=proxies, timeout=TIMEOUT, verify=VERIFY_SSL)
+        r = session.get(api, timeout=TIMEOUT, verify=VERIFY_SSL)
         r.raise_for_status()
         j = r.json()
         result = j.get("result")
@@ -187,18 +156,7 @@ def build_n8n_payload() -> Dict[str, str]:
 def call_n8n_sync(url: str, payload: Dict[str, str]) -> requests.Response:
     headers = {"Content-Type": "application/json"} if N8N_SEND_JSON else {"Content-Type": "application/x-www-form-urlencoded"}
     data = json.dumps(payload) if N8N_SEND_JSON else payload
-    
-    # プロキシ設定
-    proxies = {}
-    if HTTP_PROXY:
-        proxies['http'] = HTTP_PROXY
-    if HTTPS_PROXY:
-        proxies['https'] = HTTPS_PROXY
-    
-    # 証明書設定
-    cert = PROXY_CERT if PROXY_CERT else None
-    
-    r = requests.post(url, headers=headers, data=data, proxies=proxies, cert=cert, timeout=TIMEOUT, verify=VERIFY_SSL)
+    r = requests.post(url, headers=headers, data=data, timeout=TIMEOUT, verify=VERIFY_SSL)
     logging.info("Call %s → %s", url, r.status_code)
     return r
 
