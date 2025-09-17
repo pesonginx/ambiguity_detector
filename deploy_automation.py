@@ -128,10 +128,17 @@ def wait_for_build_result(session: requests.Session, build_url: str, wait_sec: i
 
 # ===== n8n =====
 def build_n8n_payload() -> Dict[str, str]:
+    # タグからNNN部分を抽出（例: "008-20250117" → "008"）
+    def extract_tag_number(tag: str) -> str:
+        if not tag:
+            return ""
+        m = TAG_PATTERN.match(tag)
+        return m.group(1) if m else ""
+    
     return {
-        "newTag":   PARAMS["NEW_TAG"],
-        "oldTag":   PARAMS["OLD_TAG"],
-        "gitUser":  PARAMS["GIT_USER"],
+        "newTag":   extract_tag_number(PARAMS["NEW_TAG"]),
+        "oldTag":   extract_tag_number(PARAMS["OLD_TAG"]),
+        "gitUser":  PARAMS["GIT_USER"] + "@gmail.com",
         "gitToken": PARAMS["GIT_TOKEN"],
     }
 
