@@ -366,10 +366,47 @@ def save_tag_info(new_tag: str, old_tag: str):
     except IOError as e:
         logging.error(f"タグ情報ファイル保存エラー: {e}")
 
+def get_latest_tag_from_git() -> str:
+    """Git上の最新タグ（NNN-YYYYMMDD形式）を取得"""
+    latest_tag = ""
+    for name in iter_tags(API_BASE, PROJECT_ID, GIT_TOKEN):
+        m = TAG_PATTERN.match(name)
+        if m:
+            latest_tag = name
+            break  # iter_tagsは降順でソートされているので最初の一致が最新
+    return latest_tag
+
 def has_tag_changes() -> bool:
-    """タグに変更があるかチェック"""
+    """Git上の最新タグとtag_info.jsonのnew_tagを比較して差分があるかチェック"""
     tag_info = load_tag_info()
-    return bool(tag_info.get("new_tag") and tag_info.get("old_tag"))
+    stored_new_tag = tag_info.get("new_tag", "")
+    
+    if not stored_new_tag:
+        logging.info("tag_info.jsonにnew_tagがありません → 初回実行として処理")
+        return True
+    
+    try:
+        # Git上の最新タグを直接取得
+        latest_tag = get_latest_tag_from_git()
+        
+        if not latest_tag or latest_tag == "initial-tag":
+            logging.info("Git上にタグがありません → 初回実行として処理")
+            return True
+        
+        logging.info(f"Git最新タグ: {latest_tag}, 保存済みnew_tag: {stored_new_tag}")
+        
+        # タグが異なる場合は差分あり
+        has_diff = latest_tag != stored_new_tag
+        if has_diff:
+            logging.info("タグに差分があります → Jenkins/n8nフローを実行")
+        else:
+            logging.info("タグに差分がありません → Jenkins/n8nフローをスキップ")
+        
+        return has_diff
+        
+    except Exception as e:
+        logging.warning(f"Gitタグ比較エラー: {e} → 差分ありとして処理")
+        return True
 
 def push_and_create_tag():
     """ファイルpush/tag作成フロー"""
@@ -415,13 +452,29 @@ def main():
     
     # 1) ファイルpush/tag作成フロー（オプション）
     if not args.skip_push:
+        # 1) ファイルpush/tag作成フロー
         try:
             new_tag, old_tag = push_and_create_tag()
             PARAMS["NEW_TAG"] = new_tag
             PARAMS["OLD_TAG"] = old_tag
         except Exception as e:
             logging.error(f"push/tag作成エラー: {e}")
+         
             raise SystemExit(f"push/tag作成に失敗しました: {e}")
+        
+        # 2) Jenkinsフロー
+        s = requests.Session()
+        s.auth = HTTPBasicAuth(JENKINS_USER, JENKINS_TOKEN)
+
+        try:
+            queue_url = trigger_jenkins_build(s, PARAMS)
+            build_url = resolve_queue_to_build(s, queue_url, QUEUE_WAIT_SEC)
+            result = wait_for_build_result(s, build_url, BUILD_WAIT_SEC)
+            if result not in ("SUCCESS", "UNSTABLE"):
+                raise SystemExit(f"Jenkins finished with {result} → n8n は実行しません。")
+        except Exception as e:
+            logging.error(f"Jenkinsフローエラー: {e}")
+            raise SystemExit(f"Jenkinsフローに失敗しました: {e}")
     else:
         logging.info("push/tag作成フローをスキップ")
         # 既存のタグ情報を使用
@@ -429,26 +482,12 @@ def main():
         PARAMS["NEW_TAG"] = tag_info.get("new_tag", "")
         PARAMS["OLD_TAG"] = tag_info.get("old_tag", "")
     
-    # 2) タグ差分チェック
-    if not has_tag_changes():
-        logging.info("タグに変更がありません → Jenkins/n8nフローをスキップ")
-        return
-    
     logging.info(f"タグ情報: NEW={PARAMS['NEW_TAG']}, OLD={PARAMS['OLD_TAG']}")
-    
-    # 3) Jenkinsフロー
-    s = requests.Session()
-    s.auth = HTTPBasicAuth(JENKINS_USER, JENKINS_TOKEN)
 
-    try:
-        queue_url = trigger_jenkins_build(s, PARAMS)
-        build_url = resolve_queue_to_build(s, queue_url, QUEUE_WAIT_SEC)
-        result = wait_for_build_result(s, build_url, BUILD_WAIT_SEC)
-        if result not in ("SUCCESS", "UNSTABLE"):
-            raise SystemExit(f"Jenkins finished with {result} → n8n は実行しません。")
-    except Exception as e:
-        logging.error(f"Jenkinsフローエラー: {e}")
-        raise SystemExit(f"Jenkinsフローに失敗しました: {e}")
+    # 3) タグ差分チェック
+    if not has_tag_changes():
+        logging.info("タグに変更がありません → n8nフローをスキップ")
+        return
 
     # 4) n8nフロー
     payload = build_n8n_payload()
