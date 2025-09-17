@@ -156,20 +156,21 @@ def ensure_repo(repo_url: str, branch: str, workdir: str):
         git_dir = os.path.join(workdir, ".git")
         if os.path.isdir(git_dir):
             repo = Repo(workdir)
-            logging.info(f"リポジトリを最新化中: {workdir}")
+            logging.info(f"リポジトリを確認中: {workdir}")
             
-            # リモートから最新を取得
+            # リモートから最新を取得（ローカル変更は保持）
             origin = repo.remotes.origin
             origin.fetch()
             
             # ブランチの存在確認と切り替え
             try:
                 repo.git.checkout(branch)
-                # リモートブランチにリセット
-                repo.git.reset('--hard', f'origin/{branch}')
+                # リモートブランチにリセットはしない（ローカル変更を保持）
+                logging.info(f"ブランチ '{branch}' に切り替え完了（ローカル変更保持）")
             except GitCommandError:
                 # ブランチが存在しない場合は作成
                 repo.git.checkout('-b', branch, f'origin/{branch}')
+                logging.info(f"ブランチ '{branch}' を作成して切り替え完了")
         else:
             if not os.listdir(workdir):
                 logging.info(f"新しいリポジトリを初期化中: {workdir}")
@@ -181,42 +182,7 @@ def ensure_repo(repo_url: str, branch: str, workdir: str):
                 raise RuntimeError(f"'{workdir}' は空でない非リポジトリです。")
 
 def apply_file_changes(workdir: str):
-    """
-    ./workdir/index/content内のJSONファイルをランダムに削除する処理
-    """
-    content_dir = os.path.join(workdir, "index", "content")
-    
-    if not os.path.exists(content_dir):
-        logging.info(f"ディレクトリが存在しません: {content_dir}")
-        return
-    
-    # JSONファイルを検索
-    json_files = glob.glob(os.path.join(content_dir, "*.json"))
-    
-    if not json_files:
-        logging.info(f"JSONファイルが見つかりません: {content_dir}")
-        return
-    
-    logging.info(f"見つかったJSONファイル数: {len(json_files)}")
-    
-    # ランダムに削除するファイル数を決定（1-3個、または全ファイルの50%以下）
-    max_delete = min(3, len(json_files) // 2) if len(json_files) > 1 else 1
-    delete_count = random.randint(1, max_delete)
-    
-    # ランダムにファイルを選択
-    files_to_delete = random.sample(json_files, delete_count)
-    
-    logging.info(f"削除予定のファイル数: {delete_count}")
-    
-    # ファイルを削除
-    for file_path in files_to_delete:
-        try:
-            os.remove(file_path)
-            logging.info(f"削除完了: {os.path.basename(file_path)}")
-        except OSError as e:
-            logging.error(f"削除エラー: {file_path} - {e}")
-    
-    logging.info(f"ファイル削除処理完了: {delete_count}個のファイルを削除")
+    return
 
 def stage_commit_push(workdir: str, target_path: str, branch: str, message: str):
     """
