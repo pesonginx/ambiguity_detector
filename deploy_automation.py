@@ -38,6 +38,7 @@ TAG_MESSAGE = os.getenv("TAG_MESSAGE", "auto tag")
 # プロキシ設定
 HTTP_PROXY = os.getenv('HTTP_PROXY')
 HTTPS_PROXY = os.getenv('HTTPS_PROXY')
+PROXY_CERT = os.getenv('REQUESTS_CA_BUNDLE', '')  # .pemファイルのパス
 
 # タグ情報保存ファイル
 TAG_INFO_FILE = "tag_info.json"
@@ -95,7 +96,10 @@ def trigger_jenkins_build(session: requests.Session, params: Dict[str, str]) -> 
     if HTTPS_PROXY:
         proxies['https'] = HTTPS_PROXY
     
-    r = session.post(url, params=params, proxies=proxies,
+    # 証明書設定
+    cert = PROXY_CERT if PROXY_CERT else None
+    
+    r = session.post(url, params=params, proxies=proxies, cert=cert,
                      allow_redirects=False, timeout=TIMEOUT, verify=VERIFY_SSL)
     r.raise_for_status()
     queue_url = r.headers.get("Location")
@@ -115,8 +119,11 @@ def resolve_queue_to_build(session: requests.Session, queue_url: str, wait_sec: 
     if HTTPS_PROXY:
         proxies['https'] = HTTPS_PROXY
     
+    # 証明書設定
+    cert = PROXY_CERT if PROXY_CERT else None
+    
     while time.time() < deadline:
-        q = session.get(api, proxies=proxies, timeout=TIMEOUT, verify=VERIFY_SSL)
+        q = session.get(api, proxies=proxies, cert=cert, timeout=TIMEOUT, verify=VERIFY_SSL)
         q.raise_for_status()
         data = q.json()
         if data.get("cancelled"):
@@ -188,7 +195,10 @@ def call_n8n_sync(url: str, payload: Dict[str, str]) -> requests.Response:
     if HTTPS_PROXY:
         proxies['https'] = HTTPS_PROXY
     
-    r = requests.post(url, headers=headers, data=data, proxies=proxies, timeout=TIMEOUT, verify=VERIFY_SSL)
+    # 証明書設定
+    cert = PROXY_CERT if PROXY_CERT else None
+    
+    r = requests.post(url, headers=headers, data=data, proxies=proxies, cert=cert, timeout=TIMEOUT, verify=VERIFY_SSL)
     logging.info("Call %s → %s", url, r.status_code)
     return r
 
