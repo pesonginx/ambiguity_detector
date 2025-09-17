@@ -1,13 +1,12 @@
 """
-統合Orchestrator:
+デプロイOrchestrator:
 1) ファイルpush/tag作成（オプション）
 2) タグ差分チェック（JSONファイルで管理）
 3) Jenkins buildWithParameters 起動（NEW/OLD/GIT_USER/GIT_TOKEN/WORK_ENV）
 4) ビルド完了まで待機（SUCCESS/UNSTABLE）
-5) n8n Flow1 を同期呼び出し（200なら）
-6) n8n Flow2 を同期呼び出し（200なら）
-7) n8n Flow3 を同期呼び出し
-※ 各フローの返り値は次に渡さない
+5) n8n Flow1 を呼び出し（200の場合のみ）
+6) n8n Flow2 を呼び出し（200の場合のみ）
+7) n8n Flow3 を呼び出し
 """
 
 import os, time, json, logging, requests, argparse, re, glob, random
@@ -50,7 +49,7 @@ PARAMS = {
     "NEW_TAG":   os.getenv("NEW_TAG", "NNN-20250917"),
     "OLD_TAG":   os.getenv("OLD_TAG", "NNN-20250916"),
     "GIT_USER":  os.getenv("GIT_USER", ""),
-    "GIT_TOKEN": GIT_TOKEN,
+    "GIT_TOKEN": os.getenv("GIT_TOKEN", ""),
     "WORK_ENV":  "",  # argsで設定
 }
 
@@ -70,7 +69,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s | %(me
 
 # ===== 引数解析 =====
 def parse_args():
-    parser = argparse.ArgumentParser(description="統合デプロイオーケストレーター")
+    parser = argparse.ArgumentParser(description="自動デプロイオーケストレーター")
     parser.add_argument("--work-env", "-e", required=True, 
                        choices=["dv0", "dv1", "itb", "uat", "pda", "pdb"],
                        help="作業環境を指定")
@@ -78,6 +77,8 @@ def parse_args():
                        help="ファイルpush/tag作成をスキップする（デフォルト: True）")
     parser.add_argument("--no-skip-push", "-n", action="store_false", dest="skip_push",
                        help="ファイルpush/tag作成を実行する")
+    parser.add_argument("--index-name-short", "-i", required=True,
+                       help="インデックス名の短縮名を指定")
     return parser.parse_args()
 
 # ===== Jenkins =====
@@ -140,6 +141,8 @@ def build_n8n_payload() -> Dict[str, str]:
         "oldTag":   extract_tag_number(PARAMS["OLD_TAG"]),
         "gitUser":  PARAMS["GIT_USER"] + "@gmail.com",
         "gitToken": PARAMS["GIT_TOKEN"],
+        "workEnv":  PARAMS["WORK_ENV"],
+        "indexNameShort": PARAMS["INDEX_NAME_SHORT"],
     }
 
 def call_n8n_sync(url: str, payload: Dict[str, str]) -> requests.Response:
