@@ -9,4 +9,6 @@ openpyxl>=3.1.0
 pandas>=2.0.0
 aiofiles>=23.2.0
 selenium>=4.15.0
-html2text>=2020.1.16 
+html2text>=2020.1.16
+GitPython>=3.1.0
+python-dotenv>=1.0.0 
