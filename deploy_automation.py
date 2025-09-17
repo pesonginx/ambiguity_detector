@@ -87,7 +87,15 @@ def jenkins_url(path: str) -> str:
 
 def trigger_jenkins_build(session: requests.Session, params: Dict[str, str]) -> str:
     url = jenkins_url(f"{JENKINS_JOB}/buildWithParameters")
-    r = session.post(url, params=params,
+    
+    # プロキシ設定
+    proxies = {}
+    if HTTP_PROXY:
+        proxies['http'] = HTTP_PROXY
+    if HTTPS_PROXY:
+        proxies['https'] = HTTPS_PROXY
+    
+    r = session.post(url, params=params, proxies=proxies,
                      allow_redirects=False, timeout=TIMEOUT, verify=VERIFY_SSL)
     r.raise_for_status()
     queue_url = r.headers.get("Location")
@@ -99,8 +107,16 @@ def trigger_jenkins_build(session: requests.Session, params: Dict[str, str]) -> 
 def resolve_queue_to_build(session: requests.Session, queue_url: str, wait_sec: int) -> str:
     api = queue_url.rstrip("/") + "/api/json"
     deadline = time.time() + wait_sec
+    
+    # プロキシ設定
+    proxies = {}
+    if HTTP_PROXY:
+        proxies['http'] = HTTP_PROXY
+    if HTTPS_PROXY:
+        proxies['https'] = HTTPS_PROXY
+    
     while time.time() < deadline:
-        q = session.get(api, timeout=TIMEOUT, verify=VERIFY_SSL)
+        q = session.get(api, proxies=proxies, timeout=TIMEOUT, verify=VERIFY_SSL)
         q.raise_for_status()
         data = q.json()
         if data.get("cancelled"):
@@ -116,8 +132,16 @@ def resolve_queue_to_build(session: requests.Session, queue_url: str, wait_sec: 
 def wait_for_build_result(session: requests.Session, build_url: str, wait_sec: int) -> str:
     api = build_url.rstrip("/") + "/api/json"
     deadline = time.time() + wait_sec
+    
+    # プロキシ設定
+    proxies = {}
+    if HTTP_PROXY:
+        proxies['http'] = HTTP_PROXY
+    if HTTPS_PROXY:
+        proxies['https'] = HTTPS_PROXY
+    
     while time.time() < deadline:
-        r = session.get(api, timeout=TIMEOUT, verify=VERIFY_SSL)
+        r = session.get(api, proxies=proxies, timeout=TIMEOUT, verify=VERIFY_SSL)
         r.raise_for_status()
         j = r.json()
         result = j.get("result")
@@ -156,7 +180,15 @@ def build_n8n_payload() -> Dict[str, str]:
 def call_n8n_sync(url: str, payload: Dict[str, str]) -> requests.Response:
     headers = {"Content-Type": "application/json"} if N8N_SEND_JSON else {"Content-Type": "application/x-www-form-urlencoded"}
     data = json.dumps(payload) if N8N_SEND_JSON else payload
-    r = requests.post(url, headers=headers, data=data, timeout=TIMEOUT, verify=VERIFY_SSL)
+    
+    # プロキシ設定
+    proxies = {}
+    if HTTP_PROXY:
+        proxies['http'] = HTTP_PROXY
+    if HTTPS_PROXY:
+        proxies['https'] = HTTPS_PROXY
+    
+    r = requests.post(url, headers=headers, data=data, proxies=proxies, timeout=TIMEOUT, verify=VERIFY_SSL)
     logging.info("Call %s → %s", url, r.status_code)
     return r
 
