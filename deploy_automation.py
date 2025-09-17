@@ -152,7 +152,7 @@ def call_n8n_sync(url: str, payload: Dict[str, str]) -> requests.Response:
 # ===== Git操作 =====
 def ensure_repo(repo_url: str, branch: str, workdir: str):
     """
-    手元のクローンを優先使用。無ければclone。あればfetch/checkoutで最新化。
+    手元のクローンを優先使用。無ければclone。
     """
     if not os.path.isdir(workdir):
         parent = os.path.dirname(os.path.abspath(workdir)) or "."
