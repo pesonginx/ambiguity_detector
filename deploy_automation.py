@@ -397,10 +397,9 @@ def push_and_create_tag():
     create_tag(API_BASE, PROJECT_ID, GIT_TOKEN, next_tag, BRANCH, TAG_MESSAGE)
     logging.info(f"Created tag: {next_tag}")
     
-    # 7) タグ情報を保存
+    # 7) 前回のタグ情報を取得（保存はn8nフロー完了後）
     old_tag_info = load_tag_info()
     old_tag = old_tag_info.get("new_tag", "")  # 前回のnew_tagが今回のold_tag
-    save_tag_info(next_tag, old_tag)
     
     logging.info("=== ファイルpush/tag作成フロー完了 ===")
     return next_tag, old_tag
@@ -473,7 +472,12 @@ def main():
     # Flow3
     r3 = call_n8n_sync(N8N_FLOW3_URL, payload)
     if r3.status_code == 200:
-        logging.info("Flow3 完了 (200)")
+        logging.info("デプロイ作業が完了しました。")
+        
+        # n8nフロー完了後にタグ情報を保存
+        if not args.skip_push:
+            save_tag_info(PARAMS["NEW_TAG"], PARAMS["OLD_TAG"])
+            logging.info("タグ情報を保存しました。")
     else:
         logging.warning("Flow3 status=%s", r3.status_code)
 
