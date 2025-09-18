@@ -26,7 +26,7 @@ flowchart TD
     D5a --> D5b[キュー解決<br/>ポーリング2秒]
     D5b --> D5c[ビルド完了待機<br/>ポーリング2秒]
     D5c --> D5d{ビルド結果}
-    D5d -->|SUCCESS/UNSTABLE| F[タグ差分チェック]
+    D5d -->|SUCCESS| F[タグ差分チェック]
     D5d -->|その他| Z1[スクリプト終了]
     
     E --> F
