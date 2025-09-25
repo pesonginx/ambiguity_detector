@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import scraping_api
+from app.api import deploy_router, scraping_router
 
 app = FastAPI(
     title="スクレイピングAPI",
@@ -22,7 +22,8 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 # APIルーターの登録
-app.include_router(scraping_api.router, prefix="/api/v1", tags=["scraping"])
+app.include_router(scraping_router, prefix="/api/v1", tags=["scraping"])
+app.include_router(deploy_router, prefix="/api/v1/deploy", tags=["deploy"])
 
 @app.get("/")
 async def root():
