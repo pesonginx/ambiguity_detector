@@ -10,7 +10,7 @@
 """
 
 import os, time, json, logging, requests, argparse, re, glob, random
-from typing import Dict, Tuple, Optional
+from typing import Any, Dict, Tuple, Optional, List
 from requests.auth import HTTPBasicAuth
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -51,7 +51,12 @@ PARAMS = {
     "GIT_USER":  os.getenv("GIT_USER", ""),
     "GIT_TOKEN": os.getenv("GIT_TOKEN", ""),
     "WORK_ENV":  "",  # argsで設定
+    "INDEX_NAME_SHORT": "",  # argsで設定
 }
+
+MR_APPROVERS: List[str] = []
+MR_AUTHOR_EMAIL: str = ""
+MR_SOURCE_BRANCH: str = ""
 
 QUEUE_WAIT_SEC = int(300)
 BUILD_WAIT_SEC = int(1800)
@@ -79,6 +84,10 @@ def parse_args():
                        help="ファイルpush/tag作成を実行する")
     parser.add_argument("--index-name-short", "-i", required=True,
                        help="インデックス名の短縮名を指定")
+    parser.add_argument("--mr-approver", "-a", action="append", default=[],
+                       help="マージリクエスト承認者（GitLabユーザー名）を指定。複数指定可")
+    parser.add_argument("--mr-author", default="",
+                       help="マージリクエスト作成者のメールアドレス（指定が無い場合はGIT_USER@gmail.com）")
     return parser.parse_args()
 
 # ===== Jenkins =====
@@ -218,7 +227,7 @@ def ensure_repo(repo_url: str, branch: str, workdir: str):
 def apply_file_changes(workdir: str):
     return
 
-def stage_commit_push(workdir: str, target_path: str, branch: str, message: str):
+def stage_commit_push(workdir: str, target_path: str, branch: str, message: str) -> bool:
     """
     GitPythonを使用してステージング、コミット、プッシュを実行
     """
@@ -251,7 +260,8 @@ def stage_commit_push(workdir: str, target_path: str, branch: str, message: str)
     
     # ステージングされた変更を確認
     staged_files = repo.index.diff("HEAD")
-    if staged_files:
+    has_changes = bool(staged_files)
+    if has_changes:
         logging.info(f"ステージングされたファイル数: {len(staged_files)}")
         for item in staged_files:
             logging.info(f"  - {item.a_path}")
@@ -259,21 +269,19 @@ def stage_commit_push(workdir: str, target_path: str, branch: str, message: str)
         # コミット
         logging.info(f"コミット中: {message}")
         repo.index.commit(message)
-        
-        # プッシュ
+    else:
+        logging.info("ステージングする変更がありません")
+    
+    # プッシュ
+    try:
         logging.info(f"プッシュ中: origin/{branch}")
         origin = repo.remotes.origin
         origin.push(branch)
         logging.info("プッシュ完了")
-    else:
-        logging.info("ステージングする変更がありません")
-        # 変更がなくても一応 push 試行（no-op）
-        try:
-            origin = repo.remotes.origin
-            origin.push(branch)
-            logging.info("プッシュ完了（変更なし）")
-        except GitCommandError as e:
-            logging.info(f"プッシュスキップ: {e}")
+    except GitCommandError as e:
+        logging.info(f"プッシュスキップ: {e}")
+    
+    return has_changes
 
 def iter_tags(api_base: str, project_id: str, token: str, per_page: int = 100):
     headers = {"PRIVATE-TOKEN": token}
@@ -336,25 +344,171 @@ def build_next_tag(max_seq: int, tz_name: str = "Asia/Tokyo") -> str:
     today = datetime.now(ZoneInfo(tz_name)).strftime("%Y%m%d")
     return f"{(max_seq + 1):03d}-{today}"
 
+
+def build_branch_name(next_seq: int, tz_name: str = "Asia/Tokyo") -> str:
+    """auto_branch_NNN_YYYYMMDD 形式のブランチ名を作成"""
+    today = datetime.now(ZoneInfo(tz_name)).strftime("%Y%m%d")
+    return f"auto_branch_{next_seq:03d}_{today}"
+
+
+def create_branch(workdir: str, base_branch: str, new_branch: str):
+    repo = Repo(workdir)
+    logging.info(f"ブランチ作成準備: base='{base_branch}' → new='{new_branch}'")
+    repo.git.checkout(base_branch)
+
+    existing_branches = [h.name for h in repo.heads]
+    if new_branch in existing_branches:
+        logging.info(f"既存ブランチ '{new_branch}' を使用します")
+    else:
+        try:
+            repo.git.checkout('-b', new_branch)
+            logging.info(f"新規ブランチ '{new_branch}' を作成しました")
+        except GitCommandError as e:
+            raise RuntimeError(f"ブランチ '{new_branch}' 作成に失敗しました: {e}")
+
+    # 念のため新ブランチに切り替え
+    repo.git.checkout(new_branch)
+
+
 def create_tag(api_base: str, project_id: str, token: str, tag_name: str, ref: str, message: str | None = None):
     headers = {"PRIVATE-TOKEN": token}
-    
-    # プロキシ設定
     proxies = {}
     if HTTP_PROXY:
         proxies['http'] = HTTP_PROXY
     if HTTPS_PROXY:
         proxies['https'] = HTTPS_PROXY
-    
+
     url = f"{api_base}/projects/{project_id}/repository/tags"
     payload = {"tag_name": tag_name, "ref": ref}
     if message:
         payload["message"] = message
+
     resp = requests.post(url, headers=headers, data=payload, proxies=proxies, timeout=30)
-    # 重複タグ（already exists）は成功扱いで返す
     if resp.status_code == 400 and "already exists" in resp.text:
         return
     resp.raise_for_status()
+
+
+def _gitlab_proxies() -> Dict[str, str]:
+    proxies: Dict[str, str] = {}
+    if HTTP_PROXY:
+        proxies['http'] = HTTP_PROXY
+    if HTTPS_PROXY:
+        proxies['https'] = HTTPS_PROXY
+    return proxies
+
+
+def _gitlab_headers(token: str, sudo: Optional[str] = None) -> Dict[str, str]:
+    headers = {"PRIVATE-TOKEN": token}
+    if sudo:
+        headers["Sudo"] = sudo
+    return headers
+
+
+def _get_gitlab_user_by_username(api_base: str, token: str, username: str) -> Optional[Dict[str, Any]]:
+    if not username:
+        return None
+    url = f"{api_base}/users"
+    params = {"username": username}
+    resp = requests.get(url, headers=_gitlab_headers(token), params=params,
+                        proxies=_gitlab_proxies(), timeout=30)
+    resp.raise_for_status()
+    users = resp.json()
+    if users:
+        return users[0]
+    logging.warning(f"GitLab: ユーザー '{username}' が見つかりませんでした")
+    return None
+
+
+def _get_gitlab_user_by_email(api_base: str, token: str, email: str) -> Optional[Dict[str, Any]]:
+    if not email:
+        return None
+    url = f"{api_base}/users"
+    params = {"search": email}
+    resp = requests.get(url, headers=_gitlab_headers(token), params=params,
+                        proxies=_gitlab_proxies(), timeout=30)
+    resp.raise_for_status()
+    users = resp.json()
+    for user in users:
+        if user.get("email") == email:
+            return user
+    if users:
+        logging.info(f"GitLab: 完全一致しないが候補ユーザーを検出: {users[0].get('username')}")
+    else:
+        logging.warning(f"GitLab: メール '{email}' に一致するユーザーが見つかりませんでした")
+    return None
+
+
+def _resolve_gitlab_user_ids(api_base: str, token: str, usernames: List[str]) -> List[int]:
+    user_ids: List[int] = []
+    for username in usernames:
+        user = _get_gitlab_user_by_username(api_base, token, username)
+        if user and "id" in user:
+            user_ids.append(user["id"])
+    return user_ids
+
+
+def _find_existing_merge_request(api_base: str, project_id: str, token: str,
+                                 source_branch: str, target_branch: str) -> Optional[Dict[str, Any]]:
+    url = f"{api_base}/projects/{project_id}/merge_requests"
+    params = {
+        "state": "opened",
+        "source_branch": source_branch,
+        "target_branch": target_branch,
+    }
+    resp = requests.get(url, headers=_gitlab_headers(token), params=params,
+                        proxies=_gitlab_proxies(), timeout=30)
+    resp.raise_for_status()
+    mrs = resp.json()
+    for mr in mrs:
+        if mr.get("source_branch") == source_branch and mr.get("target_branch") == target_branch:
+            return mr
+    return None
+
+
+def create_merge_request(api_base: str, project_id: str, token: str, *,
+                         source_branch: str, target_branch: str, title: str,
+                         description: str, approver_usernames: Optional[List[str]] = None,
+                         author_email: str = "") -> Optional[Dict[str, Any]]:
+    existing_mr = _find_existing_merge_request(api_base, project_id, token, source_branch, target_branch)
+    if existing_mr:
+        logging.info(f"既存のマージリクエストが存在します: {existing_mr.get('web_url', '')}")
+        return existing_mr
+
+    reviewer_ids: List[int] = []
+    if approver_usernames:
+        reviewer_ids = _resolve_gitlab_user_ids(api_base, token, approver_usernames)
+        if approver_usernames and not reviewer_ids:
+            logging.warning("指定された承認者がGitLabで見つかりませんでした")
+
+    sudo_value: Optional[str] = None
+    if author_email:
+        author_user = _get_gitlab_user_by_email(api_base, token, author_email)
+        if author_user and "id" in author_user:
+            sudo_value = str(author_user["id"])
+        else:
+            logging.warning("マージリクエスト作成者の特定に失敗しました。アクセストークンのユーザーで作成します")
+
+    headers = _gitlab_headers(token, sudo=sudo_value)
+    payload: Dict[str, Any] = {
+        "source_branch": source_branch,
+        "target_branch": target_branch,
+        "title": title,
+        "description": description,
+        "remove_source_branch": False,
+        "squash": False,
+    }
+    if reviewer_ids:
+        payload["reviewer_ids"] = reviewer_ids
+
+    url = f"{api_base}/projects/{project_id}/merge_requests"
+    resp = requests.post(url, headers=headers, json=payload,
+                         proxies=_gitlab_proxies(), timeout=30)
+    if resp.status_code == 409:
+        logging.info("マージリクエストは既に存在しているようです (409)。")
+        return _find_existing_merge_request(api_base, project_id, token, source_branch, target_branch)
+    resp.raise_for_status()
+    return resp.json()
 
 # ===== タグ情報管理 =====
 def load_tag_info() -> Dict[str, str]:
@@ -423,43 +577,90 @@ def has_tag_changes() -> bool:
         logging.warning(f"Gitタグ比較エラー: {e} → 差分ありとして処理")
         return True
 
-def push_and_create_tag():
+def push_and_create_tag() -> Tuple[str, str, bool]:
     """ファイルpush/tag作成フロー"""
     logging.info("=== ファイルpush/tag作成フロー開始 ===")
     
     # 1) 最新化
     ensure_repo(REPO_URL, BRANCH, WORKDIR)
     
+    # 1.5) タグ番号に基づくブランチ名生成
+    max_seq = get_max_seq_from_tags(API_BASE, PROJECT_ID, GIT_TOKEN)
+    next_seq = max_seq + 1
+    branch_name = build_branch_name(next_seq, tz_name=TIMEZONE)
+    logging.info(f"新規ブランチ名: {branch_name}")
+
+    # 1.6) 新規ブランチ作成
+    create_branch(WORKDIR, BRANCH, branch_name)
+
     # 2) 追加/削除（ダミー）
     apply_file_changes(WORKDIR)
     
     # 3) ステージ→コミット→プッシュ
-    stage_commit_push(WORKDIR, TARGET_PATH, BRANCH, COMMIT_MESSAGE)
-    
-    # 4) 既存NNN最大
-    max_seq = get_max_seq_from_tags(API_BASE, PROJECT_ID, GIT_TOKEN)
-    
-    # 5) 次タグ名生成
-    next_tag = build_next_tag(max_seq, tz_name=TIMEZONE)
-    
-    # 6) タグ作成
-    create_tag(API_BASE, PROJECT_ID, GIT_TOKEN, next_tag, BRANCH, TAG_MESSAGE)
-    logging.info(f"Created tag: {next_tag}")
-    
-    # 7) 前回のタグ情報を取得（保存はn8nフロー完了後）
+    has_changes = stage_commit_push(WORKDIR, TARGET_PATH, branch_name, COMMIT_MESSAGE)
+
+    # 4) 旧タグ情報
     old_tag_info = load_tag_info()
     old_tag = old_tag_info.get("new_tag", "")  # 前回のnew_tagが今回のold_tag
-    
+
+    if not has_changes:
+        logging.info("変更がないためタグ作成とマージリクエスト作成をスキップします")
+        logging.info("=== ファイルpush/tag作成フロー完了（変更なし） ===")
+        return "", old_tag, False
+
+    # 5) 次タグ名生成
+    next_tag = build_next_tag(max_seq, tz_name=TIMEZONE)
+
+    # 6) タグ作成（新規ブランチを参照）
+    create_tag(API_BASE, PROJECT_ID, GIT_TOKEN, next_tag, branch_name, TAG_MESSAGE)
+    logging.info(f"Created tag: {next_tag}")
+
+    # 7) マージリクエスト作成
+    mr_title = f"[Auto] Deploy {next_tag}"
+    mr_description_lines = [
+        f"新規タグ: {next_tag}",
+        f"旧タグ: {old_tag or 'N/A'}",
+        f"作業環境: {PARAMS.get('WORK_ENV', '')}",
+        f"インデックス: {PARAMS.get('INDEX_NAME_SHORT', '')}",
+    ]
+    mr_description = "\n".join(mr_description_lines)
+
+    author_email = MR_AUTHOR_EMAIL or f"{PARAMS.get('GIT_USER', '')}@gmail.com"
+    try:
+        mr = create_merge_request(
+            API_BASE,
+            PROJECT_ID,
+            GIT_TOKEN,
+            source_branch=branch_name,
+            target_branch=BRANCH,
+            title=mr_title,
+            description=mr_description,
+            approver_usernames=MR_APPROVERS,
+            author_email=author_email,
+        )
+        if mr:
+            logging.info(f"マージリクエストを作成しました: {mr.get('web_url', '')}")
+    except Exception as e:
+        logging.error(f"マージリクエスト作成エラー: {e}")
+        raise
+
     logging.info("=== ファイルpush/tag作成フロー完了 ===")
-    return next_tag, old_tag
+    return next_tag, old_tag, True
 
 # ===== メイン =====
 def main():
     # 引数解析
     args = parse_args()
-    
+
+    global MR_AUTHOR_EMAIL  # 明示的にグローバルを操作
     # WORK_ENVをPARAMSに設定
     PARAMS["WORK_ENV"] = args.work_env
+    PARAMS["INDEX_NAME_SHORT"] = args.index_name_short
+    if args.mr_approver:
+        MR_APPROVERS[:] = args.mr_approver
+    else:
+        MR_APPROVERS.clear()
+    MR_AUTHOR_EMAIL = args.mr_author or f"{PARAMS['GIT_USER']}@gmail.com"
     
     logging.info(f"作業環境: {args.work_env}")
     logging.info(f"push/tag作成スキップ: {args.skip_push}")
@@ -468,13 +669,18 @@ def main():
     if not args.skip_push:
         # 1) ファイルpush/tag作成フロー
         try:
-            new_tag, old_tag = push_and_create_tag()
-            PARAMS["NEW_TAG"] = new_tag
-            PARAMS["OLD_TAG"] = old_tag
+            new_tag, old_tag, has_changes = push_and_create_tag()
         except Exception as e:
             logging.error(f"push/tag作成エラー: {e}")
-         
+            
             raise SystemExit(f"push/tag作成に失敗しました: {e}")
+
+        if not has_changes:
+            logging.info("変更がないため以降の処理を終了します")
+            return
+
+        PARAMS["NEW_TAG"] = new_tag
+        PARAMS["OLD_TAG"] = old_tag
         
         # 2) Jenkinsフロー
         s = requests.Session()
