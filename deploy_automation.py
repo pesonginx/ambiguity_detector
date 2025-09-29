@@ -56,7 +56,6 @@ PARAMS = {
 
 MR_APPROVERS: List[str] = []
 MR_AUTHOR_EMAIL: str = ""
-MR_SKIP: bool = False
 MR_SOURCE_BRANCH: str = ""
 
 QUEUE_WAIT_SEC = int(300)
@@ -89,8 +88,6 @@ def parse_args():
                        help="マージリクエスト承認者（GitLabユーザー名）を指定。複数指定可")
     parser.add_argument("--mr-author", default="",
                        help="マージリクエスト作成者のメールアドレス（指定が無い場合はGIT_USER@gmail.com）")
-    parser.add_argument("--skip-mr", action="store_true",
-                       help="マージリクエスト作成をスキップし、自動でベースブランチへマージする")
     return parser.parse_args()
 
 # ===== Jenkins =====
@@ -580,27 +577,6 @@ def has_tag_changes() -> bool:
         logging.warning(f"Gitタグ比較エラー: {e} → 差分ありとして処理")
         return True
 
-def _merge_without_mr(workdir: str, base_branch: str, feature_branch: str, message: str) -> None:
-    repo = Repo(workdir)
-    logging.info(f"ベースブランチ '{base_branch}' へ '{feature_branch}' をマージします")
-    repo.git.checkout(base_branch)
-    try:
-        repo.git.merge('--no-ff', feature_branch, '-m', message)
-        logging.info("マージをコミットしました")
-    except GitCommandError as e:
-        raise RuntimeError(f"マージに失敗しました: {e}")
-
-
-def _push_branch(workdir: str, branch: str) -> None:
-    repo = Repo(workdir)
-    logging.info(f"ブランチ '{branch}' をリモートへプッシュします")
-    try:
-        origin = repo.remotes.origin
-        origin.push(branch)
-        logging.info("プッシュ完了")
-    except GitCommandError as e:
-        raise RuntimeError(f"ブランチ '{branch}' のプッシュに失敗しました: {e}")
-
 def push_and_create_tag() -> Tuple[str, str, bool]:
     """ファイルpush/tag作成フロー"""
     logging.info("=== ファイルpush/tag作成フロー開始 ===")
@@ -628,50 +604,45 @@ def push_and_create_tag() -> Tuple[str, str, bool]:
     old_tag = old_tag_info.get("new_tag", "")  # 前回のnew_tagが今回のold_tag
 
     if not has_changes:
-        logging.info("変更がないためタグ作成とマージ処理をスキップします")
+        logging.info("変更がないためタグ作成とマージリクエスト作成をスキップします")
         logging.info("=== ファイルpush/tag作成フロー完了（変更なし） ===")
         return "", old_tag, False
 
+    # 5) 次タグ名生成
     next_tag = build_next_tag(max_seq, tz_name=TIMEZONE)
+
+    # 6) タグ作成（新規ブランチを参照）
     create_tag(API_BASE, PROJECT_ID, GIT_TOKEN, next_tag, branch_name, TAG_MESSAGE)
     logging.info(f"Created tag: {next_tag}")
 
-    if MR_SKIP:
-        merge_message = f"Merge {branch_name} for {next_tag}"
-        try:
-            _merge_without_mr(WORKDIR, BRANCH, branch_name, merge_message)
-            _push_branch(WORKDIR, BRANCH)
-        except Exception as e:
-            logging.error(f"自動マージに失敗しました: {e}")
-            raise
-    else:
-        mr_title = f"[Auto] Deploy {next_tag}"
-        mr_description_lines = [
-            f"新規タグ: {next_tag}",
-            f"旧タグ: {old_tag or 'N/A'}",
-            f"作業環境: {PARAMS.get('WORK_ENV', '')}",
-            f"インデックス: {PARAMS.get('INDEX_NAME_SHORT', '')}",
-        ]
-        mr_description = "\n".join(mr_description_lines)
+    # 7) マージリクエスト作成
+    mr_title = f"[Auto] Deploy {next_tag}"
+    mr_description_lines = [
+        f"新規タグ: {next_tag}",
+        f"旧タグ: {old_tag or 'N/A'}",
+        f"作業環境: {PARAMS.get('WORK_ENV', '')}",
+        f"インデックス: {PARAMS.get('INDEX_NAME_SHORT', '')}",
+    ]
+    mr_description = "\n".join(mr_description_lines)
 
-        author_email = MR_AUTHOR_EMAIL or f"{PARAMS.get('GIT_USER', '')}@gmail.com"
-        try:
-            mr = create_merge_request(
-                API_BASE,
-                PROJECT_ID,
-                GIT_TOKEN,
-                source_branch=branch_name,
-                target_branch=BRANCH,
-                title=mr_title,
-                description=mr_description,
-                approver_usernames=MR_APPROVERS,
-                author_email=author_email,
-            )
-            if mr:
-                logging.info(f"マージリクエストを作成しました: {mr.get('web_url', '')}")
-        except Exception as e:
-            logging.error(f"マージリクエスト作成エラー: {e}")
-            raise
+    author_email = MR_AUTHOR_EMAIL or f"{PARAMS.get('GIT_USER', '')}@gmail.com"
+    try:
+        mr = create_merge_request(
+            API_BASE,
+            PROJECT_ID,
+            GIT_TOKEN,
+            source_branch=branch_name,
+            target_branch=BRANCH,
+            title=mr_title,
+            description=mr_description,
+            approver_usernames=MR_APPROVERS,
+            author_email=author_email,
+        )
+        if mr:
+            logging.info(f"マージリクエストを作成しました: {mr.get('web_url', '')}")
+    except Exception as e:
+        logging.error(f"マージリクエスト作成エラー: {e}")
+        raise
 
     logging.info("=== ファイルpush/tag作成フロー完了 ===")
     return next_tag, old_tag, True
@@ -682,8 +653,6 @@ def main():
     args = parse_args()
 
     global MR_AUTHOR_EMAIL  # 明示的にグローバルを操作
-    global MR_SKIP
-    MR_SKIP = args.skip_mr
     # WORK_ENVをPARAMSに設定
     PARAMS["WORK_ENV"] = args.work_env
     PARAMS["INDEX_NAME_SHORT"] = args.index_name_short
