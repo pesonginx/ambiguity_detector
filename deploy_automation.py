@@ -10,7 +10,7 @@
 """
 
 import os, time, json, logging, requests, argparse, re, glob, random
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, Any
 from requests.auth import HTTPBasicAuth
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -40,6 +40,18 @@ COMMIT_MESSAGE = os.getenv("COMMIT_MESSAGE", "chore: update files")
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Tokyo")
 TAG_MESSAGE = os.getenv("TAG_MESSAGE", "auto tag")
 
+# マージリクエスト設定
+MR_APPROVER = os.getenv("MR_APPROVER", GIT_USER)
+MR_AUTHOR   = os.getenv("MR_AUTHOR",   GIT_USER)
+MR_TITLE_TEMPLATE = os.getenv("MR_TITLE_TEMPLATE", "Auto MR for {branch}")
+MR_DESCRIPTION_TEMPLATE = os.getenv(
+    "MR_DESCRIPTION_TEMPLATE",
+    "Automated MR created by deploy_automation.py for {branch}",
+)
+MR_TIMEOUT_SEC = int(os.getenv("MR_TIMEOUT_SEC", str(5 * 24 * 3600)))
+MR_POLL_INTERVAL_SEC = int(os.getenv("MR_POLL_INTERVAL_SEC", "60"))
+MR_REMOVE_SOURCE_BRANCH = os.getenv("MR_REMOVE_SOURCE_BRANCH", "true").lower() != "false"
+
 # プロキシ設定
 HTTP_PROXY = os.getenv('HTTP_PROXY')
 HTTPS_PROXY = os.getenv('HTTPS_PROXY')
@@ -57,6 +69,7 @@ PARAMS = {
     "GIT_USER":  os.getenv("GIT_USER", ""),
     "GIT_TOKEN": os.getenv("GIT_TOKEN", ""),
     "WORK_ENV":  "",  # argsで設定
+    "INDEX_NAME_SHORT": "",
 }
 
 QUEUE_WAIT_SEC = int(300)
@@ -218,10 +231,8 @@ def ensure_repo(repo_url: str, branch: str, workdir: str):
 def apply_file_changes(workdir: str):
     return
 
-def stage_commit_push(workdir: str, target_path: str, branch: str, message: str):
-    """
-    GitPythonを使用してステージング、コミット、プッシュを実行
-    """
+def stage_commit_push(workdir: str, target_path: str, branch: str, message: str) -> bool:
+    """GitPythonを使用してステージング、コミット、プッシュを実行し、コミットした場合はTrueを返す"""
     repo = Repo(workdir)
     
     # ブランチに切り替え
@@ -265,6 +276,7 @@ def stage_commit_push(workdir: str, target_path: str, branch: str, message: str)
         origin = repo.remotes.origin
         origin.push(branch)
         logging.info("プッシュ完了")
+        return True
     else:
         logging.info("ステージングする変更がありません")
         # 変更がなくても一応 push 試行（no-op）
@@ -274,6 +286,27 @@ def stage_commit_push(workdir: str, target_path: str, branch: str, message: str)
             logging.info("プッシュ完了（変更なし）")
         except GitCommandError as e:
             logging.info(f"プッシュスキップ: {e}")
+        return False
+
+
+def build_auto_branch_name(tag_name: str) -> str:
+    suffix = tag_name.replace("-", "_")
+    return f"auto_branch_{suffix}"
+
+
+def checkout_new_branch(workdir: str, base_branch: str, new_branch: str):
+    repo = Repo(workdir)
+    logging.info(f"ベースブランチ '{base_branch}' にチェックアウト中")
+    repo.git.checkout(base_branch)
+    try:
+        logging.info(f"新規ブランチ '{new_branch}' を作成してチェックアウト")
+        repo.git.checkout('-b', new_branch)
+    except GitCommandError as e:
+        if "already exists" in str(e) or "already exists" in getattr(e, 'stderr', ''):
+            logging.info(f"ブランチ '{new_branch}' は既に存在します。チェックアウトします。")
+            repo.git.checkout(new_branch)
+        else:
+            raise
 
 def iter_tags(api_base: str, project_id: str, token: str, per_page: int = 100):
     headers = {"PRIVATE-TOKEN": token}
@@ -326,6 +359,88 @@ def get_max_seq_from_tags(api_base: str, project_id: str, token: str) -> int:
     
     # 有効なタグがない場合（initial-tagのみの場合）は0を返す
     return max_seq if has_valid_tags else 0
+
+
+def gitlab_request(method: str, url: str, token: str, *, params: Optional[Dict[str, Any]] = None,
+                   json_body: Optional[Dict[str, Any]] = None, data: Optional[Dict[str, Any]] = None,
+                   timeout: int = 30) -> requests.Response:
+    headers = {"PRIVATE-TOKEN": token}
+    proxies = {}
+    if HTTP_PROXY:
+        proxies['http'] = HTTP_PROXY
+    if HTTPS_PROXY:
+        proxies['https'] = HTTPS_PROXY
+    resp = requests.request(method.upper(), url, headers=headers, params=params, json=json_body,
+                            data=data, timeout=timeout, proxies=proxies, verify=VERIFY_SSL)
+    resp.raise_for_status()
+    return resp
+
+
+def find_open_merge_request(api_base: str, project_id: str, token: str,
+                            source_branch: str, target_branch: str) -> Optional[Dict[str, Any]]:
+    url = f"{api_base}/projects/{project_id}/merge_requests"
+    params = {
+        "state": "opened",
+        "source_branch": source_branch,
+        "target_branch": target_branch,
+        "order_by": "updated",
+        "sort": "desc",
+    }
+    resp = gitlab_request("get", url, token, params=params)
+    items = resp.json()
+    return items[0] if items else None
+
+
+def create_merge_request(api_base: str, project_id: str, token: str, source_branch: str,
+                         target_branch: str, title: str, description: str,
+                         remove_source_branch: bool, approver: Optional[str],
+                         author_username: Optional[str]) -> Dict[str, Any]:
+    url = f"{api_base}/projects/{project_id}/merge_requests"
+    payload: Dict[str, Any] = {
+        "source_branch": source_branch,
+        "target_branch": target_branch,
+        "title": title,
+        "description": description,
+        "remove_source_branch": remove_source_branch,
+    }
+    if approver:
+        payload["approver_usernames"] = [approver]
+    if author_username:
+        payload["assignee_username"] = author_username
+
+    try:
+        resp = gitlab_request("post", url, token, json_body=payload)
+        mr = resp.json()
+        logging.info(f"マージリクエスト作成: IID={mr.get('iid')}, URL={mr.get('web_url')}")
+        return mr
+    except requests.HTTPError as e:
+        status = getattr(e.response, 'status_code', None)
+        text = getattr(e.response, 'text', '')
+        if status in (400, 409) and "Another open merge request" in text:
+            logging.info("既存のオープンなマージリクエストを再利用します")
+            mr = find_open_merge_request(api_base, project_id, token, source_branch, target_branch)
+            if mr:
+                return mr
+        raise
+
+
+def wait_for_merge_request_merged(api_base: str, project_id: str, token: str, mr_iid: int,
+                                  timeout_sec: int, poll_interval: int):
+    url = f"{api_base}/projects/{project_id}/merge_requests/{mr_iid}"
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        resp = gitlab_request("get", url, token)
+        data = resp.json()
+        state = data.get("state")
+        merged_at = data.get("merged_at")
+        logging.info(f"MR状態チェック: state={state}, merged_at={merged_at}")
+        if merged_at or state == "merged":
+            logging.info("マージリクエストがマージされました")
+            return data
+        if state in ("closed", "locked"):
+            raise RuntimeError(f"MRがマージされずに終了しました: state={state}")
+        time.sleep(poll_interval)
+    raise TimeoutError("MRがタイムアウトまでにマージされませんでした")
 
 def build_next_tag(max_seq: int, tz_name: str = "Asia/Tokyo") -> str:
     """
@@ -423,96 +538,141 @@ def has_tag_changes() -> bool:
         logging.warning(f"Gitタグ比較エラー: {e} → 差分ありとして処理")
         return True
 
-def push_and_create_tag():
-    """ファイルpush/tag作成フロー"""
-    logging.info("=== ファイルpush/tag作成フロー開始 ===")
-    
-    # 1) 最新化
-    ensure_repo(REPO_URL, BRANCH, WORKDIR)
-    
-    # 2) 追加/削除（ダミー）
-    apply_file_changes(WORKDIR)
-    
-    # 3) ステージ→コミット→プッシュ
-    stage_commit_push(WORKDIR, TARGET_PATH, BRANCH, COMMIT_MESSAGE)
-    
-    # 4) 既存NNN最大
-    max_seq = get_max_seq_from_tags(API_BASE, PROJECT_ID, GIT_TOKEN)
-    pre_old_tag = get_latest_tag_from_git()
-    
-    # 5) 次タグ名生成
-    next_tag = build_next_tag(max_seq, tz_name=TIMEZONE)
-    
-    # 6) タグ作成
-    create_tag(API_BASE, PROJECT_ID, GIT_TOKEN, next_tag, BRANCH, TAG_MESSAGE)
-    logging.info(f"Created tag: {next_tag}")
-    
-    # 7) 前回のタグ情報を取得（保存はn8nフロー完了後）
-    old_tag_info = load_tag_info()
-    old_tag = old_tag_info.get("new_tag", "")  # 前回のnew_tagが今回のold_tag
-    if old_tag == "":
-        old_tag = pre_old_tag
-    
-    logging.info("=== ファイルpush/tag作成フロー完了 ===")
-    return next_tag, old_tag
+def prepare_branch_and_push():
+    """自動ブランチを作成し、変更をpushしてタグ作成に必要な情報を返す"""
+    logging.info("=== ブランチ作成/ファイルpushフロー開始 ===")
 
-# ===== メイン =====
+    # 1) 最新化（mainブランチ）
+    ensure_repo(REPO_URL, BRANCH, WORKDIR)
+
+    # 2) 既存タグ情報を取得
+    pre_old_tag = get_latest_tag_from_git()
+    max_seq = get_max_seq_from_tags(API_BASE, PROJECT_ID, GIT_TOKEN)
+    next_tag = build_next_tag(max_seq, tz_name=TIMEZONE)
+    branch_name = build_auto_branch_name(next_tag)
+
+    # 3) 新ブランチ作成
+    checkout_new_branch(WORKDIR, BRANCH, branch_name)
+
+    # 4) ファイル変更（ダミー）
+    apply_file_changes(WORKDIR)
+
+    # 5) ステージ→コミット→プッシュ
+    committed = stage_commit_push(WORKDIR, TARGET_PATH, branch_name, COMMIT_MESSAGE)
+    if not committed:
+        logging.info("変更がないためタグとマージリクエストの作成をスキップします")
+
+    logging.info("=== ブランチ作成/ファイルpushフロー完了 ===")
+    return {
+        "new_tag": next_tag,
+        "pre_old_tag": pre_old_tag,
+        "branch_name": branch_name,
+        "committed": committed,
+    }
+
+
+def process_push_and_tag_flow() -> Optional[Dict[str, Any]]:
+    try:
+        result = prepare_branch_and_push()
+        if not result["committed"]:
+            logging.info("コミットがないため処理を終了します")
+            return None
+        old_tag_info = load_tag_info()
+        old_tag = old_tag_info.get("new_tag", "") or result["pre_old_tag"]
+        PARAMS["NEW_TAG"] = result["new_tag"]
+        PARAMS["OLD_TAG"] = old_tag
+        return result
+    except Exception as e:
+        logging.error(f"ブランチ作成/コミット準備エラー: {e}")
+        raise SystemExit(f"ブランチ作成/コミット準備に失敗しました: {e}")
+
+
+def process_merge_request(branch_name: str):
+    title = MR_TITLE_TEMPLATE.format(branch=branch_name)
+    description = MR_DESCRIPTION_TEMPLATE.format(branch=branch_name)
+    try:
+        mr = create_merge_request(
+            API_BASE,
+            PROJECT_ID,
+            GIT_TOKEN,
+            source_branch=branch_name,
+            target_branch=BRANCH,
+            title=title,
+            description=description,
+            remove_source_branch=MR_REMOVE_SOURCE_BRANCH,
+            approver=MR_APPROVER,
+            author_username=MR_AUTHOR,
+        )
+        wait_for_merge_request_merged(
+            API_BASE,
+            PROJECT_ID,
+            GIT_TOKEN,
+            mr_iid=mr["iid"],
+            timeout_sec=MR_TIMEOUT_SEC,
+            poll_interval=MR_POLL_INTERVAL_SEC,
+        )
+    except Exception as e:
+        logging.error(f"マージリクエスト処理エラー: {e}")
+        raise SystemExit(f"マージリクエスト処理に失敗しました: {e}")
+
+
+def create_new_tag():
+    try:
+        create_tag(API_BASE, PROJECT_ID, GIT_TOKEN, PARAMS["NEW_TAG"], BRANCH, TAG_MESSAGE)
+        logging.info(f"Created tag: {PARAMS['NEW_TAG']}")
+    except Exception as e:
+        logging.error(f"タグ作成エラー: {e}")
+        raise SystemExit(f"タグ作成に失敗しました: {e}")
+
+
+def run_jenkins_flow():
+    s = requests.Session()
+    s.auth = HTTPBasicAuth(JENKINS_USER, JENKINS_TOKEN)
+
+    s.auth = None
+    s.proxies = {}
+    s.verify = VERIFY_SSL
+    original_http_proxy = os.environ.pop('HTTP_PROXY', None)
+    original_https_proxy = os.environ.pop('HTTPS_PROXY', None)
+
+    try:
+        queue_url = trigger_jenkins_build(s, PARAMS)
+        build_url = resolve_queue_to_build(s, queue_url, QUEUE_WAIT_SEC)
+        result_status = wait_for_build_result(s, build_url, BUILD_WAIT_SEC)
+        if result_status not in ("SUCCESS", "UNSTABLE"):
+            raise SystemExit(f"Jenkins finished with {result_status} → n8n は実行しません。")
+    except Exception as e:
+        logging.error(f"Jenkinsフローエラー: {e}")
+        raise SystemExit(f"Jenkinsフローに失敗しました: {e}")
+    finally:
+        if original_http_proxy:
+            os.environ['HTTP_PROXY'] = original_http_proxy
+        if original_https_proxy:
+            os.environ['HTTPS_PROXY'] = original_https_proxy
+
+
 def main():
-    # 引数解析
     args = parse_args()
-    
-    # WORK_ENVをPARAMSに設定
     PARAMS["WORK_ENV"] = args.work_env
-    
+    PARAMS["INDEX_NAME_SHORT"] = args.index_name_short
+
     logging.info(f"作業環境: {args.work_env}")
     logging.info(f"push/tag作成スキップ: {args.skip_push}")
-    
-    # 1) ファイルpush/tag作成フロー（オプション）
+
+    branch_result = None
     if not args.skip_push:
-        # 1) ファイルpush/tag作成フロー
-        try:
-            new_tag, old_tag = push_and_create_tag()
-            PARAMS["NEW_TAG"] = new_tag
-            PARAMS["OLD_TAG"] = old_tag
-        except Exception as e:
-            logging.error(f"push/tag作成エラー: {e}")
-         
-            raise SystemExit(f"push/tag作成に失敗しました: {e}")
-        
-        # 2) Jenkinsフロー
-        s = requests.Session()
-        s.auth = HTTPBasicAuth(JENKINS_USER, JENKINS_TOKEN)
-
-        # セッションを初期化
-        s.auth = None
-        s.proxies = {}
-        s.verify = VERIFY_SSL
-        original_http_proxy = os.environ.pop('HTTP_PROXY', None)
-        original_https_proxy = os.environ.pop('HTTPS_PROXY', None)
-
-
-        try:
-            queue_url = trigger_jenkins_build(s, PARAMS)
-            build_url = resolve_queue_to_build(s, queue_url, QUEUE_WAIT_SEC)
-            result = wait_for_build_result(s, build_url, BUILD_WAIT_SEC)
-            if result not in ("SUCCESS", "UNSTABLE"):
-                raise SystemExit(f"Jenkins finished with {result} → n8n は実行しません。")
-        except Exception as e:
-            logging.error(f"Jenkinsフローエラー: {e}")
-            raise SystemExit(f"Jenkinsフローに失敗しました: {e}")
-        finally:
-            # 環境変数を復元
-            if original_http_proxy:
-                os.environ['HTTP_PROXY'] = original_http_proxy
-            if original_https_proxy:
-                os.environ['HTTPS_PROXY'] = original_https_proxy
+        branch_result = process_push_and_tag_flow()
+        if branch_result is None:
+            return
+        process_merge_request(branch_result["branch_name"])
+        create_new_tag()
+        run_jenkins_flow()
     else:
         logging.info("push/tag作成フローをスキップ")
-        # 既存のタグ情報を使用
         tag_info = load_tag_info()
         PARAMS["NEW_TAG"] = tag_info.get("new_tag", "")
         PARAMS["OLD_TAG"] = tag_info.get("old_tag", "")
-    
+
     logging.info(f"タグ情報: NEW={PARAMS['NEW_TAG']}, OLD={PARAMS['OLD_TAG']}")
 
     # 3) タグ差分チェック
