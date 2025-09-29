@@ -15,21 +15,26 @@ from requests.auth import HTTPBasicAuth
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from git import Repo, GitCommandError
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # ===== 設定 =====
-JENKINS_BASE = os.getenv("JENKINS_BASE", "https://jenkins.example.com")
-JENKINS_JOB  = os.getenv("JENKINS_JOB",  "job/my-folder/job/my-job")  # 完全なジョブパスを指定
-JENKINS_USER = os.getenv("JENKINS_USER", "user")
-JENKINS_TOKEN= os.getenv("JENKINS_TOKEN","apitoken")
+JENKINS_BASE = os.getenv("JENKINS_BASE", "")
+JENKINS_JOB  = os.getenv("JENKINS_JOB",  "")  # 完全なジョブパスを指定
+JENKINS_USER = os.getenv("JENKINS_USER", "")
+JENKINS_TOKEN= os.getenv("JENKINS_TOKEN","")
 VERIFY_SSL   = os.getenv("VERIFY_SSL", "true").lower() != "false"
+JENKINS_JOB_TOKEN = os.getenv("JENKINS_JOB_TOKEN", "")
 
 # Git設定
-REPO_URL = os.getenv("REPO_URL", "git@gitlab.com:your-group/your-repo.git")
-PROJECT_ID = os.getenv("PROJECT_ID", "your-group%2Fyour-repo")
-GIT_TOKEN = os.getenv("GIT_TOKEN", "YOUR_GITLAB_TOKEN")
+REPO_URL = os.getenv("REPO_URL", "")
+PROJECT_ID = os.getenv("PROJECT_ID", "")
+GIT_USER = os.getenv("GIT_USER", "")
+GIT_TOKEN = os.getenv("GIT_TOKEN", "")
 API_BASE = os.getenv("API_BASE", "https://gitlab.com/api/v4")
 BRANCH = os.getenv("BRANCH", "main")
-WORKDIR = os.getenv("WORKDIR", "/path/to/local/repo")
+WORKDIR = os.getenv("WORKDIR", "")
 TARGET_PATH = os.getenv("TARGET_PATH", ".")
 COMMIT_MESSAGE = os.getenv("COMMIT_MESSAGE", "chore: update files")
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Tokyo")
@@ -38,6 +43,7 @@ TAG_MESSAGE = os.getenv("TAG_MESSAGE", "auto tag")
 # プロキシ設定
 HTTP_PROXY = os.getenv('HTTP_PROXY')
 HTTPS_PROXY = os.getenv('HTTPS_PROXY')
+PROXY_CERT = os.getenv('REQUESTS_CA_BUNDLE')
 
 # タグ情報保存ファイル
 TAG_INFO_FILE = "tag_info.json"
@@ -46,8 +52,8 @@ TAG_INFO_FILE = "tag_info.json"
 TAG_PATTERN = re.compile(r"^(\d{3})-(\d{8})$")
 
 PARAMS = {
-    "NEW_TAG":   os.getenv("NEW_TAG", "NNN-20250917"),
-    "OLD_TAG":   os.getenv("OLD_TAG", "NNN-20250916"),
+    "NEW_TAG":   os.getenv("NEW_TAG", ""),
+    "OLD_TAG":   os.getenv("OLD_TAG", ""),
     "GIT_USER":  os.getenv("GIT_USER", ""),
     "GIT_TOKEN": os.getenv("GIT_TOKEN", ""),
     "WORK_ENV":  "",  # argsで設定
@@ -58,9 +64,9 @@ BUILD_WAIT_SEC = int(1800)
 POLL_INTERVAL  = float(2)
 
 # n8n
-N8N_FLOW1_URL = os.getenv("N8N_FLOW1_URL", "https://n8n/webhook/flow1")
-N8N_FLOW2_URL = os.getenv("N8N_FLOW2_URL", "https://n8n/webhook/flow2")
-N8N_FLOW3_URL = os.getenv("N8N_FLOW3_URL", "https://n8n/webhook/flow3")
+N8N_FLOW1_URL = os.getenv("N8N_FLOW1_URL", "")
+N8N_FLOW2_URL = os.getenv("N8N_FLOW2_URL", "")
+N8N_FLOW3_URL = os.getenv("N8N_FLOW3_URL", "")
 N8N_SEND_JSON = os.getenv("N8N_SEND_JSON", "false").lower() == "true"
 
 TIMEOUT: Tuple[int,int] = (10, 30)
@@ -86,8 +92,7 @@ def jenkins_url(path: str) -> str:
     return f"{JENKINS_BASE.rstrip('/')}/{path.lstrip('/')}"
 
 def trigger_jenkins_build(session: requests.Session, params: Dict[str, str]) -> str:
-    url = jenkins_url(f"{JENKINS_JOB}/buildWithParameters")
-    
+    url = jenkins_url(f"/job/{JENKINS_JOB}/buildWithParameters?token={JENKINS_JOB_TOKEN}")
     # Jenkins認証情報をauthパラメータで渡す
     auth = (JENKINS_USER, JENKINS_TOKEN)
     
@@ -97,7 +102,6 @@ def trigger_jenkins_build(session: requests.Session, params: Dict[str, str]) -> 
     queue_url = r.headers.get("Location")
     if not queue_url:
         raise RuntimeError("Jenkins: queue Location header がありません。")
-    logging.info("Jenkins queued: %s", queue_url)
     return queue_url
 
 def resolve_queue_to_build(session: requests.Session, queue_url: str, wait_sec: int) -> str:
@@ -168,11 +172,7 @@ def build_n8n_payload() -> Dict[str, str]:
 def call_n8n_sync(url: str, payload: Dict[str, str]) -> requests.Response:
     headers = {"Content-Type": "application/json"} if N8N_SEND_JSON else {"Content-Type": "application/x-www-form-urlencoded"}
     data = json.dumps(payload) if N8N_SEND_JSON else payload
-    
-    # Jenkins認証情報をauthパラメータで渡す
-    auth = (JENKINS_USER, JENKINS_TOKEN)
-    
-    r = requests.post(url, headers=headers, data=data, auth=auth, timeout=TIMEOUT, verify=VERIFY_SSL)
+    r = requests.post(url, headers=headers, data=data, timeout=TIMEOUT, verify=VERIFY_SSL)
     logging.info("Call %s → %s", url, r.status_code)
     return r
 
@@ -438,6 +438,7 @@ def push_and_create_tag():
     
     # 4) 既存NNN最大
     max_seq = get_max_seq_from_tags(API_BASE, PROJECT_ID, GIT_TOKEN)
+    pre_old_tag = get_latest_tag_from_git()
     
     # 5) 次タグ名生成
     next_tag = build_next_tag(max_seq, tz_name=TIMEZONE)
@@ -449,6 +450,8 @@ def push_and_create_tag():
     # 7) 前回のタグ情報を取得（保存はn8nフロー完了後）
     old_tag_info = load_tag_info()
     old_tag = old_tag_info.get("new_tag", "")  # 前回のnew_tagが今回のold_tag
+    if old_tag == "":
+        old_tag = pre_old_tag
     
     logging.info("=== ファイルpush/tag作成フロー完了 ===")
     return next_tag, old_tag
@@ -480,6 +483,14 @@ def main():
         s = requests.Session()
         s.auth = HTTPBasicAuth(JENKINS_USER, JENKINS_TOKEN)
 
+        # セッションを初期化
+        s.auth = None
+        s.proxies = {}
+        s.verify = VERIFY_SSL
+        original_http_proxy = os.environ.pop('HTTP_PROXY', None)
+        original_https_proxy = os.environ.pop('HTTPS_PROXY', None)
+
+
         try:
             queue_url = trigger_jenkins_build(s, PARAMS)
             build_url = resolve_queue_to_build(s, queue_url, QUEUE_WAIT_SEC)
@@ -489,6 +500,12 @@ def main():
         except Exception as e:
             logging.error(f"Jenkinsフローエラー: {e}")
             raise SystemExit(f"Jenkinsフローに失敗しました: {e}")
+        finally:
+            # 環境変数を復元
+            if original_http_proxy:
+                os.environ['HTTP_PROXY'] = original_http_proxy
+            if original_https_proxy:
+                os.environ['HTTPS_PROXY'] = original_https_proxy
     else:
         logging.info("push/tag作成フローをスキップ")
         # 既存のタグ情報を使用
