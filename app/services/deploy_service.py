@@ -5,7 +5,11 @@ from typing import Dict, List
 
 import requests
 
-from app.schemas import DeployWebhookResponse, FlowResult, GitLabWebhookPayload
+from app.schemas import (
+    DeployWebhookResponse,
+    FlowResult,
+    GitLabWebhookPayload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +82,8 @@ class DeployService:
 
         return results
 
-    def handle_webhook(self, payload: GitLabWebhookPayload) -> DeployWebhookResponse:
-        if not payload.is_merge_event():
+    def handle_webhook(self, payload: GitLabWebhookPayload, *, force: bool = False) -> DeployWebhookResponse:
+        if not force and not payload.is_merge_event():
             return DeployWebhookResponse(
                 triggered=False,
                 status="ignored",

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel
@@ -64,4 +65,27 @@ class DeployWebhookResponse(BaseModel):
     status: Literal["success", "failed", "skipped", "ignored"]
     detail: Optional[str] = None
     flows: List[FlowResult] = []
+
+
+class DeployParameterPayload(BaseModel):
+    """トリガーフローから渡されるデプロイパラメータ."""
+
+    new_tag: str
+    old_tag: Optional[str] = None
+    branch_name: str
+    work_env: Optional[str] = None
+    index_name_short: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "new_tag": "009-20250930",
+                "old_tag": "008-20250925",
+                "branch_name": "auto_branch_009_20250930",
+                "work_env": "uat",
+                "index_name_short": "sample",
+            }
+        }
+
 
