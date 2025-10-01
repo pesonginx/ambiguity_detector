@@ -116,6 +116,11 @@ def _run_full_sequence(payload: GitLabWebhookPayload, params: DeployParameters) 
     _update_legacy_params(overrides)
 
     token = os.getenv("GIT_TOKEN", legacy.GIT_TOKEN)
+    logging.info(f"GIT_TOKEN: {token}")
+    logging.info(f"API_BASE: {legacy.API_BASE}")
+    logging.info(f"PROJECT_ID: {legacy.PROJECT_ID}")
+    logging.info(f"BRANCH: {legacy.BRANCH}")
+    logging.info(f"TAG_MESSAGE: {legacy.TAG_MESSAGE}")
     try:
         legacy.create_tag(
             legacy.API_BASE,
