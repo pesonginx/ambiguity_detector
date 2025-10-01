@@ -308,6 +308,16 @@ def checkout_new_branch(workdir: str, base_branch: str, new_branch: str):
         else:
             raise
 
+
+def checkout_branch(workdir: str, branch: str):
+    repo = Repo(workdir)
+    try:
+        repo.git.checkout(branch)
+        logging.info(f"ブランチ '{branch}' に戻しました")
+    except GitCommandError as exc:
+        logging.warning(f"ブランチ '{branch}' へのチェックアウトに失敗しました: {exc}")
+
+
 def iter_tags(api_base: str, project_id: str, token: str, per_page: int = 100):
     headers = {"PRIVATE-TOKEN": token}
     
@@ -541,34 +551,41 @@ def has_tag_changes() -> bool:
 def prepare_branch_and_push():
     """自動ブランチを作成し、変更をpushしてタグ作成に必要な情報を返す"""
     logging.info("=== ブランチ作成/ファイルpushフロー開始 ===")
+    branch_name: Optional[str] = None
+    try:
+        # 1) 最新化（mainブランチ）
+        ensure_repo(REPO_URL, BRANCH, WORKDIR)
 
-    # 1) 最新化（mainブランチ）
-    ensure_repo(REPO_URL, BRANCH, WORKDIR)
+        # 2) 既存タグ情報を取得
+        pre_old_tag = get_latest_tag_from_git()
+        max_seq = get_max_seq_from_tags(API_BASE, PROJECT_ID, GIT_TOKEN)
+        next_tag = build_next_tag(max_seq, tz_name=TIMEZONE)
+        branch_name = build_auto_branch_name(next_tag)
 
-    # 2) 既存タグ情報を取得
-    pre_old_tag = get_latest_tag_from_git()
-    max_seq = get_max_seq_from_tags(API_BASE, PROJECT_ID, GIT_TOKEN)
-    next_tag = build_next_tag(max_seq, tz_name=TIMEZONE)
-    branch_name = build_auto_branch_name(next_tag)
+        # 3) 新ブランチ作成
+        checkout_new_branch(WORKDIR, BRANCH, branch_name)
 
-    # 3) 新ブランチ作成
-    checkout_new_branch(WORKDIR, BRANCH, branch_name)
+        # 4) ファイル変更（ダミー）
+        apply_file_changes(WORKDIR)
 
-    # 4) ファイル変更（ダミー）
-    apply_file_changes(WORKDIR)
+        # 5) ステージ→コミット→プッシュ
+        committed = stage_commit_push(WORKDIR, TARGET_PATH, branch_name, COMMIT_MESSAGE)
+        if not committed:
+            logging.info("変更がないためタグとマージリクエストの作成をスキップします")
 
-    # 5) ステージ→コミット→プッシュ
-    committed = stage_commit_push(WORKDIR, TARGET_PATH, branch_name, COMMIT_MESSAGE)
-    if not committed:
-        logging.info("変更がないためタグとマージリクエストの作成をスキップします")
-
-    logging.info("=== ブランチ作成/ファイルpushフロー完了 ===")
-    return {
-        "new_tag": next_tag,
-        "pre_old_tag": pre_old_tag,
-        "branch_name": branch_name,
-        "committed": committed,
-    }
+        logging.info("=== ブランチ作成/ファイルpushフロー完了 ===")
+        return {
+            "new_tag": next_tag,
+            "pre_old_tag": pre_old_tag,
+            "branch_name": branch_name,
+            "committed": committed,
+        }
+    finally:
+        if branch_name:
+            try:
+                checkout_branch(WORKDIR, BRANCH)
+            except Exception as exc:  # pylint: disable=broad-except
+                logging.warning("ベースブランチへの戻しに失敗しました: %s", exc)
 
 
 def process_push_and_tag_flow() -> Optional[Dict[str, Any]]:
