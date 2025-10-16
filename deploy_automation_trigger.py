@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 import requests
 
 import deploy_automation as legacy
-
+from app.services import apply_indexed_env_to_legacy
 from dotenv import load_dotenv
 
 
@@ -89,6 +89,8 @@ def main() -> None:
     args = legacy.parse_args()
     legacy.PARAMS["WORK_ENV"] = args.work_env
     legacy.PARAMS["INDEX_NAME_SHORT"] = args.index_name_short
+
+    apply_indexed_env_to_legacy(args.index_name_short)
 
     logger.info("=== deploy_automation trigger start ===")
     logger.info("作業環境: %s", args.work_env)

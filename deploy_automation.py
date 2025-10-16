@@ -312,10 +312,21 @@ def checkout_new_branch(workdir: str, base_branch: str, new_branch: str):
 def checkout_branch(workdir: str, branch: str):
     repo = Repo(workdir)
     try:
-        repo.git.checkout(branch)
-        logging.info(f"ブランチ '{branch}' に戻しました")
+        # リモートの最新を取得
+        origin = repo.remotes.origin
+        origin.fetch()
+
+        # 対象ブランチへチェックアウト（無ければリモートから作成）
+        try:
+            repo.git.checkout(branch)
+        except GitCommandError:
+            repo.git.checkout('-B', branch, f'origin/{branch}')
+
+        # リモートブランチにハードリセット
+        repo.git.reset('--hard', f'origin/{branch}')
+        logging.info(f"ブランチ '{branch}' をリモートにハードリセットしました")
     except GitCommandError as exc:
-        logging.warning(f"ブランチ '{branch}' へのチェックアウトに失敗しました: {exc}")
+        logging.warning(f"ブランチ '{branch}' のリセットに失敗しました: {exc}")
 
 
 def iter_tags(api_base: str, project_id: str, token: str, per_page: int = 100):

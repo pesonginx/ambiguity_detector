@@ -16,6 +16,7 @@ from app.services import (
     DeployConfigStore,
     DeployParameters,
     DeployService,
+    apply_indexed_env_to_legacy,
 )
 
 
@@ -63,8 +64,10 @@ def _extract_tag_date(tag: Optional[str]) -> str:
     return match.group(2) if match else ""
 
 
-def _load_saved_params() -> DeployParameters:
-    params = config_store.load()
+def _load_saved_params(index_name_short: Optional[str]) -> DeployParameters:
+    if not index_name_short:
+        raise HTTPException(status_code=400, detail="index_name_short が指定されていません")
+    params = config_store.load(index_name_short)
     if not params:
         raise HTTPException(status_code=404, detail="デプロイパラメータが保存されていません")
     return params
@@ -110,17 +113,17 @@ def _run_full_sequence(payload: GitLabWebhookPayload, params: DeployParameters) 
     payload.work_env = overrides.get("WORK_ENV") or payload.work_env
     payload.index_name_short = overrides.get("INDEX_NAME_SHORT") or payload.index_name_short
 
+    if not payload.index_name_short:
+        raise HTTPException(status_code=400, detail="index_name_short が指定されていません")
+
     if not overrides.get("NEW_TAG"):
         raise HTTPException(status_code=400, detail="NEW_TAG が設定されていません")
+
+    apply_indexed_env_to_legacy(payload.index_name_short)
 
     _update_legacy_params(overrides)
 
     token = os.getenv("GIT_TOKEN", legacy.GIT_TOKEN)
-    logging.info(f"GIT_TOKEN: {token}")
-    logging.info(f"API_BASE: {legacy.API_BASE}")
-    logging.info(f"PROJECT_ID: {legacy.PROJECT_ID}")
-    logging.info(f"BRANCH: {legacy.BRANCH}")
-    logging.info(f"TAG_MESSAGE: {legacy.TAG_MESSAGE}")
     try:
         legacy.create_tag(
             legacy.API_BASE,
@@ -167,7 +170,7 @@ async def gitlab_webhook(payload: GitLabWebhookPayload) -> DeployWebhookResponse
         )
 
     try:
-        params = _load_saved_params()
+        params = _load_saved_params(payload.index_name_short)
         return _run_full_sequence(payload, params)
     except HTTPException:
         raise
@@ -182,6 +185,8 @@ async def save_deploy_config(payload: DeployParameterPayload) -> dict:
 
     if not payload.new_tag or not payload.branch_name:
         raise HTTPException(status_code=400, detail="new_tag と branch_name は必須です")
+    if not payload.index_name_short:
+        raise HTTPException(status_code=400, detail="index_name_short が指定されていません")
 
     params = DeployParameters(
         new_tag=payload.new_tag,
@@ -203,13 +208,13 @@ async def save_deploy_config(payload: DeployParameterPayload) -> dict:
 
 @router.post("/run/full", response_model=DeployWebhookResponse)
 async def run_full(payload: GitLabWebhookPayload = Body(default_factory=GitLabWebhookPayload)) -> DeployWebhookResponse:
-    params = _load_saved_params()
+    params = _load_saved_params(payload.index_name_short)
     return _run_full_sequence(payload, params)
 
 
 @router.post("/run/n8n", response_model=DeployWebhookResponse)
 async def run_n8n_only(payload: GitLabWebhookPayload = Body(default_factory=GitLabWebhookPayload)) -> DeployWebhookResponse:
-    params = _load_saved_params()
+    params = _load_saved_params(payload.index_name_short)
     overrides = _build_overrides(params, payload)
     payload.work_env = overrides.get("WORK_ENV") or payload.work_env
     payload.index_name_short = overrides.get("INDEX_NAME_SHORT") or payload.index_name_short
