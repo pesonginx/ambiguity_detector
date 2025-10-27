@@ -3,6 +3,8 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, List
 
+import deploy_automation as legacy
+
 import requests
 
 from app.schemas import (
@@ -32,9 +34,18 @@ class DeployService:
         self.config = config
 
     def _build_payload(self) -> Dict[str, str]:
+        def extract_tag_number(tag: str) -> str:
+            if not tag:
+                return ""
+            match = legacy.TAG_PATTERN.match(tag)
+            return match.group(1) if match else ""
+
+        new_tag_full = self.config.params.get("NEW_TAG", "")
+        old_tag_full = self.config.params.get("OLD_TAG", "")
+
         payload = {
-            "newTag": self.config.params.get("NEW_TAG", ""),
-            "oldTag": self.config.params.get("OLD_TAG", ""),
+            "newTag": extract_tag_number(new_tag_full),
+            "oldTag": extract_tag_number(old_tag_full),
             "newTagDate": self.config.params.get("NEW_TAG_DATE", ""),
             "oldTagDate": self.config.params.get("OLD_TAG_DATE", ""),
             "gitUser": self.config.params.get("GIT_USER", ""),
