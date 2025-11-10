@@ -56,6 +56,31 @@ def allowed_file(filename):
     """ファイルの拡張子をチェック"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def safe_filename(original_filename):
+    """
+    日本語を含むファイル名を安全に処理する
+    UUIDを使用してファイル名を生成し、拡張子のみ元のファイルから取得
+    
+    Args:
+        original_filename: 元のファイル名
+        
+    Returns:
+        str: 安全なファイル名（UUID + 拡張子）
+    """
+    # 拡張子を取得
+    if '.' in original_filename:
+        ext = original_filename.rsplit('.', 1)[1].lower()
+    else:
+        ext = ''
+    
+    # UUIDを生成してファイル名とする
+    safe_name = str(uuid.uuid4())
+    
+    if ext:
+        return f"{safe_name}.{ext}"
+    else:
+        return safe_name
+
 def validate_email(email):
     """メールアドレスのバリデーション（@gmail.comドメインのみ許可）"""
     pattern = r'^[a-zA-Z0-9._%+-]+@gmail\.com$'
@@ -119,18 +144,19 @@ def upload_file():
         return jsonify({'success': False, 'error': '作業者のメールアドレスが無効です（@gmail.comドメインのみ許可）'}), 400
     
     # ファイルを保存
-    filename = secure_filename(file.filename)
+    original_filename = file.filename  # 元のファイル名を保存（日本語対応）
     task_id = str(uuid.uuid4())
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{task_id}_{filename}")
+    safe_name = safe_filename(original_filename)  # 安全なファイル名を生成
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], safe_name)
     
     try:
         file.save(file_path)
     except Exception as e:
         return jsonify({'success': False, 'error': f'ファイルの保存に失敗しました: {str(e)}'}), 500
     
-    # データベースに記録
+    # データベースに記録（元のファイル名を使用）
     try:
-        create_upload_record(task_id, filename, approver_email, worker_email)
+        create_upload_record(task_id, original_filename, approver_email, worker_email)
     except Exception as e:
         # ファイルを削除
         if os.path.exists(file_path):

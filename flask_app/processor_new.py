@@ -115,7 +115,7 @@ def run_processing(task_id: str, file_path: str, simulate_error: bool = False):
                 os.remove(file_path)
                 callback.log_info('クリーンアップ', f'アップロードファイルを削除: {Path(file_path).name}', 100)
         except Exception as e:
-            print(f"ファイル削除失敗: {e}")
+            print(f"[ERROR] ファイル削除失敗: {e}")
         
     except Exception as e:
         # 予期しないエラー
