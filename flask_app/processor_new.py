@@ -20,6 +20,10 @@ from excel_to_index_processor import (
     OUTPUT_DIR
 )
 
+# インデックス化データ一覧の出力先ディレクトリ
+INDEX_LIST_DIR = Path(__file__).parent / 'data' / 'output_index_list'
+INDEX_LIST_DIR.mkdir(parents=True, exist_ok=True)
+
 # 処理ステップの定義
 PROCESSING_STEPS = [
     {"name": "ファイル検証", "description": "Excelファイルの読み込みと検証"},
@@ -87,13 +91,13 @@ def run_processing(task_id: str, file_path: str, simulate_error: bool = False):
                 callback=callback
             )
             
-            # インデックス化データ一覧をtask_id付きでリネーム
+            # インデックス化データ一覧をINDEX_LIST_DIRに移動してtask_id付きでリネーム
             if excel_output_path and excel_output_path.exists():
                 # 新しいファイル名: インデックス化データ一覧_{task_id}.xlsx
                 index_excel_filename = f"インデックス化データ一覧_{task_id}.xlsx"
-                index_excel_path = OUTPUT_DIR / index_excel_filename
+                index_excel_path = INDEX_LIST_DIR / index_excel_filename
                 
-                # ファイルをリネーム
+                # ファイルを移動してリネーム
                 shutil.move(str(excel_output_path), str(index_excel_path))
                 
                 # データベースに記録

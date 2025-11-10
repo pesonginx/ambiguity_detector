@@ -49,7 +49,7 @@ flask_app/
 ├── data/                       # データディレクトリ
 │   ├── input_data/             # アップロードファイル格納先
 │   ├── output_data/            # 処理済みJSONファイル
-│   └── インデックス化データ一覧.xlsx  # 処理結果Excel
+│   └── output_index_list/      # インデックス化データ一覧（最新5件）
 ├── templates/                  # HTMLテンプレート
 │   ├── base.html
 │   ├── index.html
@@ -123,7 +123,7 @@ gunicorn -w 4 -b 0.0.0.0:5000 --timeout 120 app:app
 - 2秒ごとのポーリングでロック状態をチェック
 
 ### インデックスファイル管理
-- 処理完了後、インデックス化データ一覧を`data/output_data/`に保存
+- 処理完了後、インデックス化データ一覧を`data/output_index_list/`に保存
 - ファイル名形式: `インデックス化データ一覧_{task_id}.xlsx`
 - 最新5件のみ保持、6件以降は自動削除
 - アップロード履歴画面からダウンロード可能
