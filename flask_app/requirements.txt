@@ -1,0 +1,25 @@
+# Flask関連
+Flask==3.0.0
+Werkzeug==3.0.1
+
+# データ処理
+pandas==2.1.4
+openpyxl==3.1.2
+
+# Azure OpenAI
+openai
+azure-search-documents
+
+# LangChain
+langchain-openai
+langchain-core
+
+# ユーティリティ
+python-dotenv
+tenacity
+pydantic
+ijson
+
+# その他
+python-dateutil
+

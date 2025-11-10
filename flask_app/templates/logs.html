@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}ログ詳細 - ファイルアップローダー{% endblock %}
+
+{% block content %}
+<div class="logs-section">
+    <h2>処理ログ詳細</h2>
+    
+    <!-- アップロード情報 -->
+    <div class="info-card">
+        <h3>処理情報</h3>
+        <div class="info-grid">
+            <div class="info-item">
+                <span class="info-label">ファイル名:</span>
+                <span class="info-value">{{ upload.filename }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">承認者:</span>
+                <span class="info-value">{{ upload.approver_email }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">作業者:</span>
+                <span class="info-value">{{ upload.worker_email }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">アップロード日時:</span>
+                <span class="info-value">{{ upload.upload_date }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">処理開始時刻:</span>
+                <span class="info-value">{{ upload.start_time or '-' }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">処理終了時刻:</span>
+                <span class="info-value">{{ upload.end_time or '-' }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">所要時間:</span>
+                <span class="info-value">
+                    {% if upload.duration %}
+                        {{ "%.2f"|format(upload.duration) }}秒
+                    {% else %}
+                        -
+                    {% endif %}
+                </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">ステータス:</span>
+                <span class="info-value">
+                    <span class="status-badge status-{{ upload.status }}">
+                        {% if upload.status == 'completed' %}
+                            ✓ 完了
+                        {% elif upload.status == 'error' %}
+                            ✗ エラー
+                        {% elif upload.status == 'processing' %}
+                            ⟳ 処理中
+                        {% else %}
+                            {{ upload.status }}
+                        {% endif %}
+                    </span>
+                </span>
+            </div>
+        </div>
+        
+        {% if upload.error_message %}
+        <div class="error-message">
+            <h4>エラー詳細:</h4>
+            <p>{{ upload.error_message }}</p>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- ログ表示 -->
+    <div class="logs-card">
+        <h3>処理ログ</h3>
+        <div class="log-list">
+            {% if logs %}
+                {% for log in logs %}
+                <div class="log-entry log-{{ log.level|lower }}">
+                    <span class="log-timestamp">{{ log.timestamp }}</span>
+                    <span class="log-level">[{{ log.level }}]</span>
+                    <span class="log-step">{{ log.step_name }}:</span>
+                    <span class="log-message">{{ log.message }}</span>
+                    {% if log.progress > 0 %}
+                        <span class="log-progress">({{ log.progress }}%)</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="no-data">ログがありません</p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <div class="actions">
+        <button onclick="window.history.back()" class="btn btn-secondary">戻る</button>
+        <a href="{{ url_for('uploads_list') }}" class="btn btn-primary">一覧に戻る</a>
+    </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}アップロード一覧 - ファイルアップローダー{% endblock %}
+
+{% block content %}
+<div class="uploads-section">
+    <h2>アップロード履歴</h2>
+    
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>ファイル名</th>
+                    <th>承認者</th>
+                    <th>作業者</th>
+                    <th>アップロード日時</th>
+                    <th>所要時間</th>
+                    <th>ステータス</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if uploads %}
+                    {% for upload in uploads %}
+                    <tr>
+                        <td>{{ upload.filename }}</td>
+                        <td>{{ upload.approver_email }}</td>
+                        <td>{{ upload.worker_email }}</td>
+                        <td>{{ upload.upload_date }}</td>
+                        <td>
+                            {% if upload.duration %}
+                                {{ "%.2f"|format(upload.duration) }}秒
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="status-badge status-{{ upload.status }}">
+                                {% if upload.status == 'completed' %}
+                                    完了
+                                {% elif upload.status == 'error' %}
+                                    エラー
+                                {% elif upload.status == 'processing' %}
+                                    処理中
+                                {% else %}
+                                    {{ upload.status }}
+                                {% endif %}
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{{ url_for('logs_view', task_id=upload.task_id) }}" class="btn btn-sm">
+                                ログ表示
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="7" class="no-data">アップロード履歴がありません</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="actions">
+        <button onclick="location.reload()" class="btn btn-secondary">更新</button>
+        <a href="{{ url_for('index') }}" class="btn btn-primary">新規アップロード</a>
+    </div>
+</div>
+{% endblock %}
+

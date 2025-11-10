@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}ファイルアップロード - ファイルアップローダー{% endblock %}
+
+{% block content %}
+<div class="upload-section">
+    <h2>Excelファイルアップロード</h2>
+    
+    <!-- ロック状態表示 -->
+    <div id="lockMessage" class="lock-message" style="display: none;">
+        <div class="loading-spinner"></div>
+        <p>インデックス化のプロセスが進行中です</p>
+    </div>
+    
+    <!-- アップロードフォーム -->
+    <div id="uploadForm" class="upload-form">
+        <form id="fileUploadForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="approverEmail">承認者メールアドレス <span class="required">*</span></label>
+                <input 
+                    type="email" 
+                    id="approverEmail" 
+                    name="approver_email" 
+                    placeholder="approver@gmail.com"
+                    required
+                    pattern="[a-zA-Z0-9._%+-]+@gmail\.com"
+                    title="@gmail.comのメールアドレスを入力してください"
+                >
+                <small class="form-hint">@gmail.comドメインのみ許可</small>
+            </div>
+
+            <div class="form-group">
+                <label for="workerEmail">作業者メールアドレス <span class="required">*</span></label>
+                <input 
+                    type="email" 
+                    id="workerEmail" 
+                    name="worker_email" 
+                    placeholder="worker@gmail.com"
+                    required
+                    pattern="[a-zA-Z0-9._%+-]+@gmail\.com"
+                    title="@gmail.comのメールアドレスを入力してください"
+                >
+                <small class="form-hint">@gmail.comドメインのみ許可</small>
+            </div>
+
+            <div class="form-group">
+                <label for="fileInput">Excelファイル (xlsx) <span class="required">*</span></label>
+                <div class="file-input-wrapper">
+                    <input 
+                        type="file" 
+                        id="fileInput" 
+                        name="file" 
+                        accept=".xlsx"
+                        required
+                    >
+                    <div class="file-input-display">
+                        <span id="fileName" class="file-name">ファイルを選択してください</span>
+                        <button type="button" class="btn-select-file">ファイル選択</button>
+                    </div>
+                </div>
+                <small class="form-hint">最大200MB、xlsxファイルのみ</small>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary" id="uploadBtn">
+                    アップロード開始
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- 処理中の表示 -->
+    <div id="processingSection" class="processing-section" style="display: none;">
+        <h3>処理状況</h3>
+        
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <div class="progress-text">
+                <span id="progressPercent">0%</span>
+            </div>
+        </div>
+
+        <div class="log-container">
+            <div id="logOutput" class="log-output"></div>
+            <div id="currentStep" class="current-step"></div>
+        </div>
+
+        <div id="resultMessage" class="result-message" style="display: none;"></div>
+        
+        <div class="form-actions">
+            <button id="viewLogsBtn" class="btn btn-secondary" style="display: none;">
+                詳細ログを表示
+            </button>
+            <button id="newUploadBtn" class="btn btn-primary" style="display: none;">
+                新規アップロード
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% endblock %}
+
