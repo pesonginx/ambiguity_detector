@@ -37,9 +37,17 @@ def init_db():
                 end_time TEXT,
                 duration REAL,
                 status TEXT NOT NULL,
-                error_message TEXT
+                error_message TEXT,
+                index_excel_path TEXT
             )
         ''')
+        
+        # 既存テーブルにindex_excel_path列を追加（既に存在する場合はスキップ）
+        try:
+            cursor.execute('ALTER TABLE uploads ADD COLUMN index_excel_path TEXT')
+            print("[INFO] index_excel_path列を追加しました")
+        except sqlite3.OperationalError:
+            pass  # 既に列が存在する場合
         
         # ログテーブル
         cursor.execute('''
@@ -123,6 +131,20 @@ def update_upload_status(task_id: str, status: str, error_message: Optional[str]
                 UPDATE uploads SET status = ?, end_time = ?, duration = ?, error_message = ?
                 WHERE task_id = ?
             ''', (status, end_time, duration, error_message, task_id))
+        
+        conn.commit()
+        conn.close()
+
+def update_index_excel_path(task_id: str, index_excel_path: str):
+    """インデックス化データ一覧のファイルパスを更新"""
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE uploads SET index_excel_path = ?
+            WHERE task_id = ?
+        ''', (index_excel_path, task_id))
         
         conn.commit()
         conn.close()

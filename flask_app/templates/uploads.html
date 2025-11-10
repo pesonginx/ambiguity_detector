@@ -16,6 +16,7 @@
                     <th>アップロード日時</th>
                     <th>所要時間</th>
                     <th>ステータス</th>
+                    <th>一覧DL</th>
                     <th>操作</th>
                 </tr>
             </thead>
@@ -48,6 +49,19 @@
                             </span>
                         </td>
                         <td>
+                            {% if upload.index_excel_path %}
+                                <a href="{{ url_for('download_index_excel', task_id=upload.task_id) }}" 
+                                   class="btn btn-sm btn-download"
+                                   download>
+                                    📥 ダウンロード
+                                </a>
+                            {% else %}
+                                <button class="btn btn-sm btn-disabled" disabled title="インデックスファイルがありません">
+                                    📥 ダウンロード
+                                </button>
+                            {% endif %}
+                        </td>
+                        <td>
                             <a href="{{ url_for('logs_view', task_id=upload.task_id) }}" class="btn btn-sm">
                                 ログ表示
                             </a>
@@ -56,7 +70,7 @@
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="7" class="no-data">アップロード履歴がありません</td>
+                        <td colspan="8" class="no-data">アップロード履歴がありません</td>
                     </tr>
                 {% endif %}
             </tbody>

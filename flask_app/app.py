@@ -1,7 +1,7 @@
 """
 Flaskアプリケーション - ファイルアップローダー
 """
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context, send_file
 from werkzeug.utils import secure_filename
 import os
 import uuid
@@ -10,13 +10,14 @@ import time
 import re
 import json
 from datetime import datetime
+from pathlib import Path
 
 from database import (
     init_db, create_upload_record, get_all_uploads,
     get_upload_by_task_id, get_logs_by_task_id,
     get_lock_status, is_locked, set_lock
 )
-from processor_new import run_processing
+from processor_new import run_processing, OUTPUT_DIR
 
 app = Flask(__name__)
 
@@ -86,6 +87,28 @@ def validate_email(email):
     pattern = r'^[a-zA-Z0-9._%+-]+@gmail\.com$'
     return re.match(pattern, email) is not None
 
+def cleanup_old_index_files():
+    """
+    古いインデックス化データ一覧ファイルを削除
+    最新5件のみを保持し、それ以降は削除する
+    """
+    try:
+        # すべてのアップロード記録を取得（新しい順）
+        uploads = get_all_uploads()
+        
+        # 6件目以降のインデックスファイルを削除
+        if len(uploads) > 5:
+            for upload in uploads[5:]:
+                index_excel_path = upload.get('index_excel_path')
+                if index_excel_path and os.path.exists(index_excel_path):
+                    try:
+                        os.remove(index_excel_path)
+                        print(f"[INFO] 古いインデックスファイルを削除: {index_excel_path}")
+                    except Exception as e:
+                        print(f"[ERROR] ファイル削除失敗: {e}")
+    except Exception as e:
+        print(f"[ERROR] cleanup_old_index_files: {e}")
+
 @app.route('/')
 def index():
     """メインページ"""
@@ -141,7 +164,7 @@ def upload_file():
         return jsonify({'success': False, 'error': '承認者のメールアドレスが無効です'}), 400
     
     if not validate_email(worker_email):
-        return jsonify({'success': False, 'error': '作業者のメールアドレスが無効です（@gmail.comドメインのみ許可）'}), 400
+        return jsonify({'success': False, 'error': '作業者のメールアドレスが無効です'}), 400
     
     # ファイルを保存
     original_filename = file.filename  # 元のファイル名を保存（日本語対応）
@@ -259,6 +282,31 @@ def api_logs(task_id):
         'upload': upload,
         'logs': logs
     })
+
+@app.route('/download/<task_id>')
+def download_index_excel(task_id):
+    """インデックス化データ一覧のダウンロード"""
+    try:
+        # タスク情報を取得
+        upload = get_upload_by_task_id(task_id)
+        if not upload:
+            return jsonify({'success': False, 'error': 'タスクが見つかりません'}), 404
+        
+        # インデックスファイルパスを取得
+        index_excel_path = upload.get('index_excel_path')
+        if not index_excel_path or not os.path.exists(index_excel_path):
+            return jsonify({'success': False, 'error': 'ファイルが見つかりません'}), 404
+        
+        # ファイルをダウンロード
+        return send_file(
+            index_excel_path,
+            as_attachment=True,
+            download_name=f"インデックス化データ一覧_{task_id}.xlsx",
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        print(f"[ERROR] ダウンロードエラー: {e}")
+        return jsonify({'success': False, 'error': f'ダウンロードに失敗しました: {str(e)}'}), 500
 
 @app.errorhandler(413)
 def request_entity_too_large(error):

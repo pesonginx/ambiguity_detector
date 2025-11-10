@@ -5,9 +5,13 @@ Excel to Index JSONプロセッサを統合
 import time
 import os
 from pathlib import Path
+import shutil
 from database import (
-    add_log, update_upload_status, set_lock
+    add_log, update_upload_status, set_lock, update_index_excel_path
 )
+
+# 古いインデックスファイルを削除する関数をインポート
+# 循環インポートを避けるため、関数内でインポートする
 
 # excel_to_index_processorをインポート
 from excel_to_index_processor import (
@@ -83,10 +87,34 @@ def run_processing(task_id: str, file_path: str, simulate_error: bool = False):
                 callback=callback
             )
             
-            callback.log_info('処理完了', 
-                            f'すべての処理が正常に終了しました。インデックス化データ: {excel_output_path.name}', 
-                            100)
+            # インデックス化データ一覧をtask_id付きでリネーム
+            if excel_output_path and excel_output_path.exists():
+                # 新しいファイル名: インデックス化データ一覧_{task_id}.xlsx
+                index_excel_filename = f"インデックス化データ一覧_{task_id}.xlsx"
+                index_excel_path = OUTPUT_DIR / index_excel_filename
+                
+                # ファイルをリネーム
+                shutil.move(str(excel_output_path), str(index_excel_path))
+                
+                # データベースに記録
+                update_index_excel_path(task_id, str(index_excel_path))
+                
+                callback.log_info('処理完了', 
+                                f'すべての処理が正常に終了しました。インデックス化データ: {index_excel_filename}', 
+                                100)
+            else:
+                callback.log_info('処理完了', 
+                                'すべての処理が正常に終了しました', 
+                                100)
+            
             update_upload_status(task_id, 'completed')
+            
+            # 古いインデックスファイルを削除（最新5件のみ保持）
+            try:
+                from app import cleanup_old_index_files
+                cleanup_old_index_files()
+            except Exception as cleanup_error:
+                print(f"[WARNING] 古いファイルのクリーンアップに失敗: {cleanup_error}")
             
         except FileNotFoundError as e:
             # ファイルが見つからない
