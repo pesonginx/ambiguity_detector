@@ -1068,12 +1068,12 @@ def save_deploy_config(
         raise
 
 
-def trigger_jenkins_build(params: Dict[str, str]) -> str:
+def trigger_jenkins_build(session: requests.Session, params: Dict[str, str]) -> str:
     """Jenkinsビルドをトリガーし、キューURLを返す"""
     url = f"{JENKINS_BASE.rstrip('/')}/job/{JENKINS_JOB}/buildWithParameters?token={JENKINS_JOB_TOKEN}"
     auth = (JENKINS_USER, JENKINS_TOKEN)
     
-    response = requests.post(
+    response = session.post(
         url,
         params=params,
         auth=auth,
@@ -1089,14 +1089,14 @@ def trigger_jenkins_build(params: Dict[str, str]) -> str:
     return queue_url
 
 
-def resolve_queue_to_build(queue_url: str, wait_sec: int = QUEUE_WAIT_SEC) -> str:
+def resolve_queue_to_build(session: requests.Session, queue_url: str, wait_sec: int = QUEUE_WAIT_SEC) -> str:
     """JenkinsキューからビルドURLを取得"""
     api = queue_url.rstrip("/") + "/api/json"
     deadline = time.time() + wait_sec
     auth = (JENKINS_USER, JENKINS_TOKEN)
     
     while time.time() < deadline:
-        response = requests.get(api, auth=auth, timeout=TIMEOUT, verify=VERIFY_SSL)
+        response = session.get(api, auth=auth, timeout=TIMEOUT, verify=VERIFY_SSL)
         response.raise_for_status()
         data = response.json()
         
@@ -1112,14 +1112,14 @@ def resolve_queue_to_build(queue_url: str, wait_sec: int = QUEUE_WAIT_SEC) -> st
     raise TimeoutError("Jenkins: queue → build 解決タイムアウト")
 
 
-def wait_for_build_result(build_url: str, wait_sec: int = BUILD_WAIT_SEC) -> str:
+def wait_for_build_result(session: requests.Session, build_url: str, wait_sec: int = BUILD_WAIT_SEC) -> str:
     """Jenkinsビルドの完了を待機"""
     api = build_url.rstrip("/") + "/api/json"
     deadline = time.time() + wait_sec
     auth = (JENKINS_USER, JENKINS_TOKEN)
     
     while time.time() < deadline:
-        response = requests.get(api, auth=auth, timeout=TIMEOUT, verify=VERIFY_SSL)
+        response = session.get(api, auth=auth, timeout=TIMEOUT, verify=VERIFY_SSL)
         response.raise_for_status()
         data = response.json()
         result = data.get("result")
@@ -1137,18 +1137,29 @@ def run_jenkins_flow(params: Dict[str, str], callback=None) -> str:
     if callback:
         callback.log_info("Jenkins実行", "Jenkinsビルドを開始", 97)
     
+    session = requests.Session()
+    session.auth = HTTPBasicAuth(JENKINS_USER, JENKINS_TOKEN)
+    
+    # deploy_automation.py と同様に、セッションのプロキシを外しつつ、
+    # 一時的に環境変数のHTTP(S)_PROXYも無効化する
+    session.auth = None
+    session.proxies = {}
+    session.verify = VERIFY_SSL
+    original_http_proxy = os.environ.pop("HTTP_PROXY", None)
+    original_https_proxy = os.environ.pop("HTTPS_PROXY", None)
+    
     try:
-        queue_url = trigger_jenkins_build(params)
+        queue_url = trigger_jenkins_build(session, params)
         
         if callback:
             callback.log_info("Jenkins実行", "キューに追加されました", 97)
         
-        build_url = resolve_queue_to_build(queue_url)
+        build_url = resolve_queue_to_build(session, queue_url)
         
         if callback:
             callback.log_info("Jenkins実行", "ビルドが開始されました", 98)
         
-        result = wait_for_build_result(build_url)
+        result = wait_for_build_result(session, build_url)
         
         if callback:
             callback.log_info("Jenkins実行", f"ビルド完了: {result}", 99)
@@ -1158,6 +1169,12 @@ def run_jenkins_flow(params: Dict[str, str], callback=None) -> str:
         if callback:
             callback.log_error("Jenkins実行", f"Jenkins実行失敗: {str(e)}", 99)
         raise
+    finally:
+        # 環境変数のHTTP(S)_PROXYを元に戻す
+        if original_http_proxy is not None:
+            os.environ["HTTP_PROXY"] = original_http_proxy
+        if original_https_proxy is not None:
+            os.environ["HTTPS_PROXY"] = original_https_proxy
 
 
 def cleanup_output_files(callback=None) -> None:
