@@ -25,6 +25,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import SimpleJsonOutputParser
 import requests
 from requests.auth import HTTPBasicAuth
+from tqdm import tqdm
 
 # .env ファイルをロード（flask_appの1つ上の階層）
 env_path = Path(__file__).parent.parent / ".env"
@@ -440,7 +441,7 @@ def add_embeddings_to_record(record: Dict, embedding_client: AzureOpenAI) -> Dic
     return record
 
 
-def add_embeddings_batch(json_records: List[Dict], callback=None, max_workers: int = 4) -> List[Dict]:
+def add_embeddings_batch(json_records: List[Dict], callback=None, max_workers: int = 4, step_index: int = 7) -> List[Dict]:
     """
     複数レコードにEmbeddingを並列で追加
     
@@ -448,6 +449,7 @@ def add_embeddings_batch(json_records: List[Dict], callback=None, max_workers: i
         json_records: JSONレコードリスト
         callback: 進捗報告用コールバック
         max_workers: 並列処理のワーカー数
+        step_index: 現在のステップインデックス
         
     Returns:
         List[Dict]: Embeddingが追加されたレコードリスト
@@ -465,6 +467,8 @@ def add_embeddings_batch(json_records: List[Dict], callback=None, max_workers: i
     if callback:
         callback.log_info("Embedding取得", f"{total_records}件の処理を開始", 60)
     
+    # tqdmでプログレスバーを作成
+    with tqdm(total=total_records, desc="Embedding取得", disable=callback is None) as pbar:
     # 並列処理
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # タスクを投入
@@ -478,9 +482,16 @@ def add_embeddings_batch(json_records: List[Dict], callback=None, max_workers: i
             try:
                 result = future.result()
                 processed_records.append(result)
-                
-                # 進捗報告
-                if callback and i % 10 == 0:
+                    pbar.update(1)
+                    
+                    # 進捗とステップ情報を更新
+                    if callback:
+                        step_progress = (i + 1) / total_records * 100
+                        estimated_time = pbar.format_dict.get('elapsed', 0) / (i + 1) * (total_records - i - 1) if i > 0 else 0
+                        callback.update_step("Embedding取得", step_index, step_progress, estimated_time)
+                        
+                        # ログ報告
+                        if i % 10 == 0:
                     progress = 60 + int((i / total_records) * 10)
                     callback.log_info("Embedding取得", f"処理中: {i+1}/{total_records}", progress)
                     
@@ -493,6 +504,7 @@ def add_embeddings_batch(json_records: List[Dict], callback=None, max_workers: i
     
     if callback:
         callback.log_info("Embedding取得", f"{len(processed_records)}件の処理完了", 70)
+        callback.update_step("Embedding取得", step_index, 100, 0)
     
     return processed_records
 
@@ -573,7 +585,7 @@ def extract_keywords_for_record(record: Dict) -> Dict:
         raise
 
 
-def extract_keywords_batch(json_records: List[Dict], callback=None, max_workers: int = 4) -> List[Dict]:
+def extract_keywords_batch(json_records: List[Dict], callback=None, max_workers: int = 4, step_index: int = 8) -> List[Dict]:
     """
     複数レコードからキーワードを並列で抽出
     
@@ -581,6 +593,7 @@ def extract_keywords_batch(json_records: List[Dict], callback=None, max_workers:
         json_records: JSONレコードリスト
         callback: 進捗報告用コールバック
         max_workers: 並列処理のワーカー数
+        step_index: 現在のステップインデックス
         
     Returns:
         List[Dict]: キーワードが追加されたレコードリスト
@@ -591,6 +604,8 @@ def extract_keywords_batch(json_records: List[Dict], callback=None, max_workers:
     if callback:
         callback.log_info("キーワード抽出", f"{total_records}件の処理を開始", 70)
     
+    # tqdmでプログレスバーを作成
+    with tqdm(total=total_records, desc="キーワード抽出", disable=callback is None) as pbar:
     # 並列処理
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # タスクを投入
@@ -604,9 +619,16 @@ def extract_keywords_batch(json_records: List[Dict], callback=None, max_workers:
             try:
                 result = future.result()
                 processed_records.append(result)
-                
-                # 進捗報告
-                if callback and i % 10 == 0:
+                    pbar.update(1)
+                    
+                    # 進捗とステップ情報を更新
+                    if callback:
+                        step_progress = (i + 1) / total_records * 100
+                        estimated_time = pbar.format_dict.get('elapsed', 0) / (i + 1) * (total_records - i - 1) if i > 0 else 0
+                        callback.update_step("キーワード抽出", step_index, step_progress, estimated_time)
+                        
+                        # ログ報告
+                        if i % 10 == 0:
                     progress = 70 + int((i / total_records) * 20)
                     callback.log_info("キーワード抽出", f"処理中: {i+1}/{total_records}", progress)
                     
@@ -619,9 +641,11 @@ def extract_keywords_batch(json_records: List[Dict], callback=None, max_workers:
                 record = json_records[record_idx].copy()
                 record["content_keywords"] = []
                 processed_records.append(record)
+                    pbar.update(1)
     
     if callback:
         callback.log_info("キーワード抽出", f"{len(processed_records)}件の処理完了", 90)
+        callback.update_step("キーワード抽出", step_index, 100, 0)
     
     return processed_records
 
@@ -710,6 +734,15 @@ def process_excel_to_index(
     # Step 2: バリデーションチェック
     df_registration, delete_list = validate_data_content(df, callback)
     
+    # 統計情報を記録
+    record_count = len(df_registration)
+    json_files_deleted = len(delete_list)
+    if callback:
+        callback.update_stats(
+            record_count=record_count,
+            json_files_deleted=json_files_deleted
+        )
+    
     # Step 3: UUID生成
     excel_output_path = BASE_DIR / "data" / "インデックス化データ一覧.xlsx"
     df_registration = add_uuid_to_dataframe(df_registration, excel_output_path, callback)
@@ -728,13 +761,18 @@ def process_excel_to_index(
     del df, df_registration
     
     # Step 7: Embedding取得（並列処理）
-    json_records = add_embeddings_batch(json_records, callback, max_workers=4)
+    json_records = add_embeddings_batch(json_records, callback, max_workers=4, step_index=6)
     
     # Step 8: キーワード抽出（並列処理）
-    json_records = extract_keywords_batch(json_records, callback, max_workers=4)
+    json_records = extract_keywords_batch(json_records, callback, max_workers=4, step_index=7)
     
     # Step 9: ファイル出力
     save_individual_json_files(json_records, output_dir, callback)
+    
+    # JSONファイル作成数を記録
+    json_files_created = len(json_records)
+    if callback:
+        callback.update_stats(json_files_created=json_files_created)
     
     # Step 10: Git操作、タグ作成、Jenkins実行、デプロイ
     if enable_git_deploy:

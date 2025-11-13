@@ -130,6 +130,15 @@ def logs_view(task_id):
     logs = get_logs_by_task_id(task_id)
     return render_template('logs.html', upload=upload, logs=logs)
 
+@app.route('/processing/<task_id>')
+def processing_view(task_id):
+    """処理状況表示ページ"""
+    upload = get_upload_by_task_id(task_id)
+    if not upload:
+        return "タスクが見つかりません", 404
+    
+    return render_template('processing.html', task_id=task_id, upload=upload)
+
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
     """ファイルアップロードエンドポイント"""
@@ -211,10 +220,10 @@ def lock_status():
 
 @app.route('/api/stream/<task_id>')
 def stream_logs(task_id):
-    """Server-Sent Eventsでログをストリーミング"""
+    """Server-Sent Eventsでログとステップ進捗をストリーミング"""
     
     def generate():
-        """ログをストリーミング生成"""
+        """ログとステップ進捗をストリーミング生成"""
         last_log_id = 0
         upload = get_upload_by_task_id(task_id)
         
@@ -231,6 +240,7 @@ def stream_logs(task_id):
             new_logs = logs[last_log_id:]
             for log in new_logs:
                 log_data = {
+                    'type': 'log',
                     'timestamp': log['timestamp'],
                     'level': log['level'],
                     'step_name': log['step_name'],
@@ -240,10 +250,26 @@ def stream_logs(task_id):
                 yield f"data: {json.dumps(log_data)}\n\n"
                 last_log_id += 1
             
+            # ステップ進捗情報を送信
+            if upload:
+                step_data = {
+                    'type': 'step_progress',
+                    'current_step': upload.get('current_step', ''),
+                    'current_step_index': upload.get('current_step_index', 0),
+                    'total_steps': upload.get('total_steps', 10),
+                    'step_progress': upload.get('step_progress', 0),
+                    'estimated_remaining_time': upload.get('estimated_remaining_time', 0),
+                    'record_count': upload.get('record_count', 0),
+                    'json_files_created': upload.get('json_files_created', 0),
+                    'json_files_deleted': upload.get('json_files_deleted', 0)
+                }
+                yield f"data: {json.dumps(step_data)}\n\n"
+            
             # 処理が完了したかチェック
             if upload['status'] in ['completed', 'error']:
                 # 最終ステータスを送信
                 final_data = {
+                    'type': 'final',
                     'status': upload['status'],
                     'duration': upload.get('duration', 0),
                     'error_message': upload.get('error_message'),
@@ -281,6 +307,29 @@ def api_logs(task_id):
     return jsonify({
         'upload': upload,
         'logs': logs
+    })
+
+@app.route('/api/task/<task_id>/stats')
+def api_task_stats(task_id):
+    """タスクの統計情報を取得"""
+    upload = get_upload_by_task_id(task_id)
+    if not upload:
+        return jsonify({'error': 'タスクが見つかりません'}), 404
+    
+    return jsonify({
+        'task_id': task_id,
+        'status': upload.get('status'),
+        'record_count': upload.get('record_count', 0),
+        'json_files_created': upload.get('json_files_created', 0),
+        'json_files_deleted': upload.get('json_files_deleted', 0),
+        'current_step': upload.get('current_step', ''),
+        'current_step_index': upload.get('current_step_index', 0),
+        'total_steps': upload.get('total_steps', 10),
+        'step_progress': upload.get('step_progress', 0),
+        'estimated_remaining_time': upload.get('estimated_remaining_time', 0),
+        'start_time': upload.get('start_time'),
+        'end_time': upload.get('end_time'),
+        'duration': upload.get('duration', 0)
     })
 
 @app.route('/download/<task_id>')

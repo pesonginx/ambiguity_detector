@@ -87,10 +87,9 @@ async function handleFormSubmit(event) {
         const data = await response.json();
         
         if (data.success) {
-            // アップロード成功
+            // アップロード成功 - processing ページに遷移
             currentTaskId = data.task_id;
-            showProcessingSection();
-            startStreaming(data.task_id);
+            window.location.href = `/processing/${data.task_id}`;
         } else {
             // エラー
             alert('エラー: ' + data.error);

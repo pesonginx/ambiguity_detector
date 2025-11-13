@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 import shutil
 from database import (
-    add_log, update_upload_status, set_lock, update_index_excel_path
+    add_log, update_upload_status, set_lock, update_index_excel_path,
+    update_processing_stats, update_step_progress
 )
 
 # 古いインデックスファイルを削除する関数をインポート
@@ -44,6 +45,8 @@ class ProcessorCallback:
     def __init__(self, task_id: str):
         self.task_id = task_id
         self.current_progress = 0
+        self.current_step_index = 0
+        self.total_steps = 10
     
     def log_info(self, step_name: str, message: str, progress: int):
         """INFOレベルのログを記録"""
@@ -59,6 +62,28 @@ class ProcessorCallback:
         """ERRORレベルのログを記録"""
         add_log(self.task_id, 'ERROR', step_name, message, progress)
         self.current_progress = progress
+    
+    def update_step(self, step_name: str, step_index: int, step_progress: float, 
+                    estimated_remaining_time: float = 0):
+        """ステップ進捗を更新（tqdm用）"""
+        self.current_step_index = step_index
+        update_step_progress(
+            self.task_id, 
+            step_name, 
+            step_index, 
+            step_progress, 
+            estimated_remaining_time
+        )
+    
+    def update_stats(self, record_count: int = None, json_files_created: int = None,
+                    json_files_deleted: int = None):
+        """統計情報を更新"""
+        update_processing_stats(
+            self.task_id,
+            record_count=record_count,
+            json_files_created=json_files_created,
+            json_files_deleted=json_files_deleted
+        )
 
 
 def run_processing(task_id: str, file_path: str, simulate_error: bool = False):

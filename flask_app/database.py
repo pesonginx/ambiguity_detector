@@ -38,16 +38,37 @@ def init_db():
                 duration REAL,
                 status TEXT NOT NULL,
                 error_message TEXT,
-                index_excel_path TEXT
+                index_excel_path TEXT,
+                record_count INTEGER DEFAULT 0,
+                json_files_created INTEGER DEFAULT 0,
+                json_files_deleted INTEGER DEFAULT 0,
+                current_step TEXT,
+                current_step_index INTEGER DEFAULT 0,
+                total_steps INTEGER DEFAULT 10,
+                step_progress REAL DEFAULT 0,
+                estimated_remaining_time REAL DEFAULT 0
             )
         ''')
         
-        # 既存テーブルにindex_excel_path列を追加（既に存在する場合はスキップ）
-        try:
-            cursor.execute('ALTER TABLE uploads ADD COLUMN index_excel_path TEXT')
-            print("[INFO] index_excel_path列を追加しました")
-        except sqlite3.OperationalError:
-            pass  # 既に列が存在する場合
+        # 既存テーブルに新しい列を追加（既に存在する場合はスキップ）
+        new_columns = [
+            ('index_excel_path', 'TEXT'),
+            ('record_count', 'INTEGER DEFAULT 0'),
+            ('json_files_created', 'INTEGER DEFAULT 0'),
+            ('json_files_deleted', 'INTEGER DEFAULT 0'),
+            ('current_step', 'TEXT'),
+            ('current_step_index', 'INTEGER DEFAULT 0'),
+            ('total_steps', 'INTEGER DEFAULT 10'),
+            ('step_progress', 'REAL DEFAULT 0'),
+            ('estimated_remaining_time', 'REAL DEFAULT 0')
+        ]
+        
+        for column_name, column_type in new_columns:
+            try:
+                cursor.execute(f'ALTER TABLE uploads ADD COLUMN {column_name} {column_type}')
+                print(f"[INFO] {column_name}列を追加しました")
+            except sqlite3.OperationalError:
+                pass  # 既に列が存在する場合
         
         # ログテーブル
         cursor.execute('''
@@ -262,4 +283,52 @@ def is_locked() -> bool:
     """ロックされているかチェック"""
     status = get_lock_status()
     return bool(status['is_locked'])
+
+def update_processing_stats(task_id: str, record_count: Optional[int] = None,
+                            json_files_created: Optional[int] = None,
+                            json_files_deleted: Optional[int] = None):
+    """処理統計情報を更新"""
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        update_parts = []
+        params = []
+        
+        if record_count is not None:
+            update_parts.append('record_count = ?')
+            params.append(record_count)
+        if json_files_created is not None:
+            update_parts.append('json_files_created = ?')
+            params.append(json_files_created)
+        if json_files_deleted is not None:
+            update_parts.append('json_files_deleted = ?')
+            params.append(json_files_deleted)
+        
+        if update_parts:
+            params.append(task_id)
+            query = f"UPDATE uploads SET {', '.join(update_parts)} WHERE task_id = ?"
+            cursor.execute(query, params)
+            conn.commit()
+        
+        conn.close()
+
+def update_step_progress(task_id: str, current_step: str, current_step_index: int,
+                        step_progress: float, estimated_remaining_time: float = 0):
+    """ステップ進捗情報を更新"""
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE uploads 
+            SET current_step = ?, 
+                current_step_index = ?,
+                step_progress = ?,
+                estimated_remaining_time = ?
+            WHERE task_id = ?
+        ''', (current_step, current_step_index, step_progress, estimated_remaining_time, task_id))
+        
+        conn.commit()
+        conn.close()
 

@@ -1,0 +1,403 @@
+{% extends "base.html" %}
+
+{% block title %}処理中 - ファイルアップローダー{% endblock %}
+
+{% block content %}
+<style>
+    .processing-container {
+        display: grid;
+        grid-template-columns: 1fr 400px;
+        gap: 2rem;
+        max-width: 1600px;
+        margin: 0 auto;
+    }
+    
+    @media (max-width: 1200px) {
+        .processing-container {
+            grid-template-columns: 1fr;
+        }
+    }
+    
+    .left-column {
+        min-width: 0;
+    }
+    
+    .right-column {
+        position: sticky;
+        top: 2rem;
+        height: fit-content;
+    }
+    
+    .section-card {
+        background: white;
+        border-radius: 8px;
+        padding: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        margin-bottom: 1.5rem;
+    }
+    
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #1e293b;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+    
+    .status-processing {
+        background-color: #dbeafe;
+        color: #1e40af;
+    }
+    
+    .status-completed {
+        background-color: #d1fae5;
+        color: #065f46;
+    }
+    
+    .status-error {
+        background-color: #fee2e2;
+        color: #991b1b;
+    }
+    
+    .step-indicator {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem;
+        background: #f8fafc;
+        border-radius: 6px;
+        margin-bottom: 1rem;
+    }
+    
+    .step-info {
+        flex: 1;
+    }
+    
+    .step-name {
+        font-weight: 600;
+        color: #1e293b;
+        margin-bottom: 0.25rem;
+    }
+    
+    .step-count {
+        font-size: 0.875rem;
+        color: #64748b;
+    }
+    
+    .remaining-steps {
+        text-align: right;
+        font-size: 0.875rem;
+        color: #64748b;
+    }
+    
+    .remaining-steps-number {
+        display: block;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #3b82f6;
+    }
+    
+    .progress-section {
+        margin-bottom: 1rem;
+    }
+    
+    .progress-bar-container {
+        background: #e2e8f0;
+        border-radius: 9999px;
+        height: 12px;
+        overflow: hidden;
+        position: relative;
+    }
+    
+    .progress-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #3b82f6, #60a5fa);
+        border-radius: 9999px;
+        transition: width 0.3s ease;
+    }
+    
+    .progress-text {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 0.5rem;
+        font-size: 0.875rem;
+        color: #64748b;
+    }
+    
+    .log-container {
+        background: #0f172a;
+        border-radius: 6px;
+        padding: 1rem;
+        max-height: 400px;
+        overflow-y: auto;
+        font-family: 'Courier New', monospace;
+        font-size: 0.875rem;
+        color: #e2e8f0;
+    }
+    
+    .log-line {
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        margin-bottom: 0.25rem;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+    
+    .log-line.error {
+        background-color: rgba(239, 68, 68, 0.2);
+    }
+    
+    .log-line.warning {
+        background-color: rgba(251, 191, 36, 0.2);
+    }
+    
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    
+    .info-label {
+        font-weight: 500;
+        color: #64748b;
+    }
+    
+    .info-value {
+        font-weight: 600;
+        color: #1e293b;
+        text-align: right;
+    }
+    
+    .stat-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+    }
+    
+    .stat-label {
+        font-size: 0.875rem;
+        opacity: 0.9;
+        margin-bottom: 0.25rem;
+    }
+    
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+    }
+    
+    .loading-spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(59, 130, 246, 0.3);
+        border-top-color: #3b82f6;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+    
+    .btn-group {
+        display: flex;
+        gap: 0.75rem;
+        margin-top: 1.5rem;
+    }
+    
+    .btn {
+        flex: 1;
+        padding: 0.75rem 1.5rem;
+        border: none;
+        border-radius: 6px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+    }
+    
+    .btn-primary {
+        background: #3b82f6;
+        color: white;
+    }
+    
+    .btn-primary:hover {
+        background: #2563eb;
+    }
+    
+    .btn-secondary {
+        background: #64748b;
+        color: white;
+    }
+    
+    .btn-secondary:hover {
+        background: #475569;
+    }
+    
+    .estimated-time {
+        text-align: center;
+        padding: 1rem;
+        background: #f1f5f9;
+        border-radius: 6px;
+        margin-top: 1rem;
+    }
+    
+    .estimated-time-label {
+        font-size: 0.875rem;
+        color: #64748b;
+        margin-bottom: 0.25rem;
+    }
+    
+    .estimated-time-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #3b82f6;
+    }
+</style>
+
+<div class="processing-container">
+    <!-- 左カラム: ログと進捗 -->
+    <div class="left-column">
+        <div class="section-card">
+            <div class="section-title">
+                <span class="loading-spinner"></span>
+                処理状況
+                <span id="statusBadge" class="status-badge status-processing">処理中</span>
+            </div>
+            
+            <!-- ステップインディケーター -->
+            <div class="step-indicator">
+                <div class="step-info">
+                    <div class="step-name" id="currentStepName">初期化中...</div>
+                    <div class="step-count">
+                        ステップ <span id="currentStepIndex">0</span> / <span id="totalSteps">10</span>
+                    </div>
+                </div>
+                <div class="remaining-steps">
+                    <span class="remaining-steps-number" id="remainingSteps">10</span>
+                    残り
+                </div>
+            </div>
+            
+            <!-- ステップ進捗バー -->
+            <div class="progress-section">
+                <div class="progress-bar-container">
+                    <div id="stepProgressBar" class="progress-bar-fill" style="width: 0%"></div>
+                </div>
+                <div class="progress-text">
+                    <span>現在のステップ: <span id="stepProgressPercent">0%</span></span>
+                    <span id="estimatedTime">推定残り時間: 計算中...</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ログ表示 -->
+        <div class="section-card">
+            <div class="section-title">📋 処理ログ</div>
+            <div id="logContainer" class="log-container"></div>
+        </div>
+        
+        <!-- ボタン -->
+        <div class="btn-group" id="actionButtons" style="display: none;">
+            <a href="/logs/{{ task_id }}" class="btn btn-secondary">詳細ログを表示</a>
+            <a href="/" class="btn btn-primary">新規アップロード</a>
+        </div>
+    </div>
+    
+    <!-- 右カラム: 詳細情報 -->
+    <div class="right-column">
+        <!-- タスク情報 -->
+        <div class="section-card">
+            <div class="section-title">📊 タスク情報</div>
+            <div class="info-row">
+                <span class="info-label">タスクID</span>
+                <span class="info-value">{{ task_id[:8] }}...</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">ファイル名</span>
+                <span class="info-value">{{ upload.filename }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">承認者</span>
+                <span class="info-value">{{ upload.approver_email }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">作業者</span>
+                <span class="info-value">{{ upload.worker_email }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">アップロード日時</span>
+                <span class="info-value">{{ upload.upload_date }}</span>
+            </div>
+        </div>
+        
+        <!-- 統計情報 -->
+        <div class="section-card">
+            <div class="section-title">📈 処理統計</div>
+            <div class="stat-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                <div class="stat-label">処理対象レコード数</div>
+                <div class="stat-value" id="recordCount">0</div>
+            </div>
+            <div class="stat-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <div class="stat-label">生成JSONファイル数</div>
+                <div class="stat-value" id="jsonFilesCreated">0</div>
+            </div>
+            <div class="stat-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                <div class="stat-label">削除JSONファイル数</div>
+                <div class="stat-value" id="jsonFilesDeleted">0</div>
+            </div>
+        </div>
+        
+        <!-- 推定完了時間 -->
+        <div class="section-card">
+            <div class="section-title">⏱️ 推定完了時間</div>
+            <div class="estimated-time">
+                <div class="estimated-time-label">残り時間</div>
+                <div class="estimated-time-value" id="remainingTimeDisplay">計算中...</div>
+            </div>
+            <div class="info-row" style="margin-top: 1rem;">
+                <span class="info-label">開始時刻</span>
+                <span class="info-value" id="startTime">{{ upload.start_time or '-' }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">経過時間</span>
+                <span class="info-value" id="elapsedTime">0秒</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">推定完了時刻</span>
+                <span class="info-value" id="estimatedCompletionTime">計算中...</span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/processing.js') }}"></script>
+<script>
+    // ページロード時に処理を開始
+    const taskId = '{{ task_id }}';
+    initProcessing(taskId);
+</script>
+{% endblock %}
+
