@@ -34,7 +34,8 @@ PROCESSING_STEPS = [
     {"name": "JSON生成", "description": "登録用JSONデータの作成"},
     {"name": "Embedding取得", "description": "Azure OpenAIでEmbedding生成"},
     {"name": "キーワード抽出", "description": "GPTによるキーワード抽出"},
-    {"name": "ファイル出力", "description": "個別JSONファイルの分割と保存"}
+    {"name": "ファイル出力", "description": "個別JSONファイルの分割と保存"},
+    {"name": "Git操作とデプロイ", "description": "GitLabコミット、タグ作成、Jenkins実行"}
 ]
 
 
@@ -85,14 +86,21 @@ def run_processing(task_id: str, file_path: str, simulate_error: bool = False):
         
         # メイン処理を実行
         try:
-            excel_output_path = process_excel_to_index(
+            # index_name_shortを環境変数または設定から取得
+            index_name_short = os.getenv("INDEX_NAME_SHORT", "default_index")
+            
+            result = process_excel_to_index(
                 input_dir=INPUT_DIR,
                 output_dir=OUTPUT_DIR,
-                callback=callback
+                callback=callback,
+                index_name_short=index_name_short,
+                enable_git_deploy=True  # Git操作とデプロイを実行
             )
             
+            excel_output_path = result.get("excel_path")
+            
             # インデックス化データ一覧をINDEX_LIST_DIRに移動してtask_id付きでリネーム
-            if excel_output_path and excel_output_path.exists():
+            if excel_output_path and Path(excel_output_path).exists():
                 # 新しいファイル名: インデックス化データ一覧_{task_id}.xlsx
                 index_excel_filename = f"インデックス化データ一覧_{task_id}.xlsx"
                 index_excel_path = INDEX_LIST_DIR / index_excel_filename
@@ -103,8 +111,13 @@ def run_processing(task_id: str, file_path: str, simulate_error: bool = False):
                 # データベースに記録
                 update_index_excel_path(task_id, str(index_excel_path))
                 
+                # Git/デプロイ結果を含めたメッセージ
+                git_result = result.get("git_result", {})
+                new_tag = git_result.get("new_tag", "N/A")
+                commit_count = git_result.get("commit_count", 0)
+                
                 callback.log_info('処理完了', 
-                                f'すべての処理が正常に終了しました。インデックス化データ: {index_excel_filename}', 
+                                f'すべての処理が正常に終了しました。インデックス化データ: {index_excel_filename}, タグ: {new_tag}, コミット数: {commit_count}', 
                                 100)
             else:
                 callback.log_info('処理完了', 
