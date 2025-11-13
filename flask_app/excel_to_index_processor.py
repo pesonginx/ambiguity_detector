@@ -166,19 +166,21 @@ def read_and_validate_excel_files(input_dir: Path, callback=None) -> pd.DataFram
         callback.log_info("ファイル検証", f"{len(excel_files)}個のExcelファイルを検出", 5)
     
     data_frames = []
-    for i, file in enumerate(excel_files):
-        try:
-            if callback:
-                callback.log_info("ファイル検証", f"読み込み中: {file.name}", 5 + int((i / len(excel_files)) * 10))
-            
-            df = pd.read_excel(file, sheet_name="rag")
-            data_frames.append(df)
-            
-        except Exception as e:
-            error_msg = f"ファイル読み込みエラー: {file.name} - {str(e)}"
-            if callback:
-                callback.log_error("ファイル検証", error_msg, 5)
-            raise ValueError(error_msg)
+    with tqdm(total=len(excel_files), desc="Excel読み込み", disable=callback is None) as pbar:
+        for i, file in enumerate(excel_files):
+            try:
+                if callback:
+                    callback.log_info("ファイル検証", f"読み込み中: {file.name}", 5 + int((i / len(excel_files)) * 10))
+                
+                df = pd.read_excel(file, sheet_name="rag")
+                data_frames.append(df)
+                pbar.update(1)
+                
+            except Exception as e:
+                error_msg = f"ファイル読み込みエラー: {file.name} - {str(e)}"
+                if callback:
+                    callback.log_error("ファイル検証", error_msg, 5)
+                raise ValueError(error_msg)
     
     # データフレームを結合
     merged_df = pd.concat(data_frames, ignore_index=True)
@@ -331,15 +333,17 @@ def delete_old_files_from_git(delete_list: List[str], callback=None):
     
     # ダミー処理: ローカルファイル削除（開発用）
     local_delete_count = 0
-    for rag_id in delete_list:
-        file_path = OUTPUT_DIR / f"{rag_id}.json"
-        if file_path.exists():
-            try:
-                file_path.unlink()
-                local_delete_count += 1
-            except Exception as e:
-                if callback:
-                    callback.log_warning("旧データ削除", f"ファイル削除失敗: {rag_id} - {str(e)}", 50)
+    with tqdm(total=len(delete_list), desc="旧データ削除", disable=callback is None) as pbar:
+        for rag_id in delete_list:
+            file_path = OUTPUT_DIR / f"{rag_id}.json"
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                    local_delete_count += 1
+                except Exception as e:
+                    if callback:
+                        callback.log_warning("旧データ削除", f"ファイル削除失敗: {rag_id} - {str(e)}", 50)
+            pbar.update(1)
     
     if callback:
         callback.log_info("旧データ削除", f"ローカルファイル削除完了: {local_delete_count}件", 55)
@@ -362,36 +366,38 @@ def create_json_records(df: pd.DataFrame, callback=None) -> List[Dict]:
     json_list = []
     total_rows = len(df)
     
-    for i, (idx, data) in enumerate(df.iterrows()):
-        # 進捗報告
-        if callback and i % 100 == 0:
-            progress = 55 + int((i / total_rows) * 5)
-            callback.log_info("JSON生成", f"処理中: {i}/{total_rows}", progress)
-        
-        # カテゴリIDの変換
-        category_id_large = parse_category_id(data.get("category_id_large"))
-        category_id_medium = parse_category_id(data.get("category_id_medium"))
-        category_id_small = parse_category_id(data.get("category_id_small"))
-        
-        # JSON レコード作成
-        index_data = {
-            "rag_id": str(data["rag_id"]),
-            "thread_id": str(data["thread_id"]),
-            "group_id": str(data["group_id"]),
-            "update_timestamp": datetime.strptime(str(data["update_timestamp"]), "%Y%m%d").strftime("%Y-%m-%d"),
-            "content": f"{data['content']} \n\n{data.get('content_en', '')}",
-            "content_embedding": [],
-            "content_keywords": [],
-            "category_id_large": category_id_large,
-            "category_id_medium": category_id_medium,
-            "category_id_small": category_id_small,
-            "effective_start_date": datetime.strptime(str(data["effective_start_date"]), "%Y%m%d").strftime("%Y-%m-%d"),
-            "effective_end_date": datetime.strptime(str(data["effective_end_date"]), "%Y%m%d").strftime("%Y-%m-%d"),
-            "extra_field_1": "",
-            "extra_field_2": ""
-        }
-        
-        json_list.append(index_data)
+    with tqdm(total=total_rows, desc="JSON生成", disable=callback is None) as pbar:
+        for i, (idx, data) in enumerate(df.iterrows()):
+            # 進捗報告
+            if callback and i % 100 == 0:
+                progress = 55 + int((i / max(total_rows, 1)) * 5)
+                callback.log_info("JSON生成", f"処理中: {i}/{total_rows}", progress)
+            
+            # カテゴリIDの変換
+            category_id_large = parse_category_id(data.get("category_id_large"))
+            category_id_medium = parse_category_id(data.get("category_id_medium"))
+            category_id_small = parse_category_id(data.get("category_id_small"))
+            
+            # JSON レコード作成
+            index_data = {
+                "rag_id": str(data["rag_id"]),
+                "thread_id": str(data["thread_id"]),
+                "group_id": str(data["group_id"]),
+                "update_timestamp": datetime.strptime(str(data["update_timestamp"]), "%Y%m%d").strftime("%Y-%m-%d"),
+                "content": f"{data['content']} \n\n{data.get('content_en', '')}",
+                "content_embedding": [],
+                "content_keywords": [],
+                "category_id_large": category_id_large,
+                "category_id_medium": category_id_medium,
+                "category_id_small": category_id_small,
+                "effective_start_date": datetime.strptime(str(data["effective_start_date"]), "%Y%m%d").strftime("%Y-%m-%d"),
+                "effective_end_date": datetime.strptime(str(data["effective_end_date"]), "%Y%m%d").strftime("%Y-%m-%d"),
+                "extra_field_1": "",
+                "extra_field_2": ""
+            }
+            
+            json_list.append(index_data)
+            pbar.update(1)
     
     if callback:
         callback.log_info("JSON生成", f"{len(json_list)}件のJSONレコードを作成完了", 60)
@@ -469,38 +475,34 @@ def add_embeddings_batch(json_records: List[Dict], callback=None, max_workers: i
     
     # tqdmでプログレスバーを作成
     with tqdm(total=total_records, desc="Embedding取得", disable=callback is None) as pbar:
-    # 並列処理
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # タスクを投入
-        future_to_record = {
-            executor.submit(add_embeddings_to_record, record, embedding_client): i 
-            for i, record in enumerate(json_records)
-        }
-        
-        # 完了したタスクから結果を取得
-        for i, future in enumerate(as_completed(future_to_record)):
-            try:
-                result = future.result()
-                processed_records.append(result)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_record = {
+                executor.submit(add_embeddings_to_record, record, embedding_client): i 
+                for i, record in enumerate(json_records)
+            }
+            
+            for i, future in enumerate(as_completed(future_to_record)):
+                try:
+                    result = future.result()
+                    processed_records.append(result)
                     pbar.update(1)
                     
-                    # 進捗とステップ情報を更新
                     if callback:
-                        step_progress = (i + 1) / total_records * 100
-                        estimated_time = pbar.format_dict.get('elapsed', 0) / (i + 1) * (total_records - i - 1) if i > 0 else 0
+                        step_progress = (i + 1) / max(total_records, 1) * 100
+                        elapsed = pbar.format_dict.get('elapsed', 0)
+                        estimated_time = elapsed / (i + 1) * (total_records - i - 1) if i > 0 else 0
                         callback.update_step("Embedding取得", step_index, step_progress, estimated_time)
                         
-                        # ログ報告
-                        if i % 10 == 0:
-                    progress = 60 + int((i / total_records) * 10)
-                    callback.log_info("Embedding取得", f"処理中: {i+1}/{total_records}", progress)
+                        if (i + 1) % 10 == 0 or i == total_records - 1:
+                            progress = 60 + int((i / max(total_records, 1)) * 10)
+                            callback.log_info("Embedding取得", f"処理中: {i+1}/{total_records}", progress)
                     
-            except Exception as e:
-                record_idx = future_to_record[future]
-                if callback:
-                    callback.log_error("Embedding取得", 
-                                     f"レコード{record_idx}でエラー: {str(e)}", 65)
-                raise
+                except Exception as e:
+                    record_idx = future_to_record[future]
+                    if callback:
+                        callback.log_error("Embedding取得", 
+                                           f"レコード{record_idx}でエラー: {str(e)}", 65)
+                    raise
     
     if callback:
         callback.log_info("Embedding取得", f"{len(processed_records)}件の処理完了", 70)
@@ -604,44 +606,37 @@ def extract_keywords_batch(json_records: List[Dict], callback=None, max_workers:
     if callback:
         callback.log_info("キーワード抽出", f"{total_records}件の処理を開始", 70)
     
-    # tqdmでプログレスバーを作成
     with tqdm(total=total_records, desc="キーワード抽出", disable=callback is None) as pbar:
-    # 並列処理
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # タスクを投入
-        future_to_record = {
-            executor.submit(extract_keywords_for_record, record): i 
-            for i, record in enumerate(json_records)
-        }
-        
-        # 完了したタスクから結果を取得
-        for i, future in enumerate(as_completed(future_to_record)):
-            try:
-                result = future.result()
-                processed_records.append(result)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_record = {
+                executor.submit(extract_keywords_for_record, record): i 
+                for i, record in enumerate(json_records)
+            }
+            
+            for i, future in enumerate(as_completed(future_to_record)):
+                record_idx = future_to_record[future]
+                try:
+                    result = future.result()
+                    processed_records.append(result)
+                except Exception as e:
+                    if callback:
+                        callback.log_error("キーワード抽出", 
+                                           f"レコード{record_idx}でエラー: {str(e)}", 80)
+                    record = json_records[record_idx].copy()
+                    record["content_keywords"] = []
+                    processed_records.append(record)
+                finally:
                     pbar.update(1)
                     
-                    # 進捗とステップ情報を更新
                     if callback:
-                        step_progress = (i + 1) / total_records * 100
-                        estimated_time = pbar.format_dict.get('elapsed', 0) / (i + 1) * (total_records - i - 1) if i > 0 else 0
+                        step_progress = (i + 1) / max(total_records, 1) * 100
+                        elapsed = pbar.format_dict.get('elapsed', 0)
+                        estimated_time = elapsed / (i + 1) * (total_records - i - 1) if i > 0 else 0
                         callback.update_step("キーワード抽出", step_index, step_progress, estimated_time)
                         
-                        # ログ報告
-                        if i % 10 == 0:
-                    progress = 70 + int((i / total_records) * 20)
-                    callback.log_info("キーワード抽出", f"処理中: {i+1}/{total_records}", progress)
-                    
-            except Exception as e:
-                record_idx = future_to_record[future]
-                if callback:
-                    callback.log_error("キーワード抽出", 
-                                     f"レコード{record_idx}でエラー: {str(e)}", 80)
-                # エラーでも処理継続（空のキーワードリスト）
-                record = json_records[record_idx].copy()
-                record["content_keywords"] = []
-                processed_records.append(record)
-                    pbar.update(1)
+                        if (i + 1) % 10 == 0 or i == total_records - 1:
+                            progress = 70 + int((i / max(total_records, 1)) * 20)
+                            callback.log_info("キーワード抽出", f"処理中: {i+1}/{total_records}", progress)
     
     if callback:
         callback.log_info("キーワード抽出", f"{len(processed_records)}件の処理完了", 90)
@@ -667,29 +662,32 @@ def save_individual_json_files(json_records: List[Dict], output_dir: Path, callb
     if callback:
         callback.log_info("ファイル出力", f"{total_records}件のファイル出力を開始", 90)
     
-    for i, record in enumerate(json_records):
-        rag_id = record.get("rag_id")
-        if not rag_id:
-            if callback:
-                callback.log_warning("ファイル出力", f"レコード{i}にrag_idがありません", 90)
-            continue
-        
-        output_file = output_dir / f"{rag_id}.json"
-        
-        try:
-            with output_file.open("w", encoding="utf-8") as f:
-                json.dump(record, f, ensure_ascii=False, indent=4, default=custom_encoder)
+    with tqdm(total=total_records, desc="ファイル出力", disable=callback is None) as pbar:
+        for i, record in enumerate(json_records):
+            rag_id = record.get("rag_id")
+            if not rag_id:
+                if callback:
+                    callback.log_warning("ファイル出力", f"レコード{i}にrag_idがありません", 90)
+                pbar.update(1)
+                continue
             
-            # 進捗報告
-            if callback and i % 50 == 0:
-                progress = 90 + int((i / total_records) * 10)
-                callback.log_info("ファイル出力", f"保存中: {i+1}/{total_records}", progress)
+            output_file = output_dir / f"{rag_id}.json"
+            
+            try:
+                with output_file.open("w", encoding="utf-8") as f:
+                    json.dump(record, f, ensure_ascii=False, indent=4, default=custom_encoder)
                 
-        except Exception as e:
-            if callback:
-                callback.log_error("ファイル出力", 
-                                 f"ファイル保存失敗: {rag_id} - {str(e)}", 95)
-            raise
+                if callback and (i % 50 == 0 or i == total_records - 1):
+                    progress = 90 + int((i / max(total_records, 1)) * 10)
+                    callback.log_info("ファイル出力", f"保存中: {i+1}/{total_records}", progress)
+                    
+            except Exception as e:
+                if callback:
+                    callback.log_error("ファイル出力", 
+                                     f"ファイル保存失敗: {rag_id} - {str(e)}", 95)
+                raise
+            finally:
+                pbar.update(1)
     
     if callback:
         callback.log_info("ファイル出力", f"{total_records}件のファイル出力完了", 100)
@@ -889,34 +887,37 @@ def commit_files_to_gitlab_batch(
     last_commit_sha = ""
     commit_sha_list = []  # 作成されたコミットSHAのリスト（ロールバック用）
     
-    for i in range(0, len(actions), BATCH_SIZE):
-        batch_actions = actions[i:i + BATCH_SIZE]
-        batch_num = (i // BATCH_SIZE) + 1
-        total_batches = (len(actions) + BATCH_SIZE - 1) // BATCH_SIZE
-        
-        commit_message = f"auto deploy: update index files (batch {batch_num}/{total_batches}, added: {len([a for a in batch_actions if a['action'] == 'create'])}, deleted: {len([a for a in batch_actions if a['action'] == 'delete'])})"
-        
-        url = f"{GITLAB_API_BASE}/projects/{GITLAB_PROJECT_ID}/repository/commits"
-        payload = {
-            "branch": branch,
-            "commit_message": commit_message,
-            "actions": batch_actions
-        }
-        
-        try:
-            response = _gitlab_request("POST", url, json=payload)
-            commit_data = response.json()
-            last_commit_sha = commit_data.get("id", "")
-            commit_sha_list.append(last_commit_sha)  # コミットSHAを記録
-            commit_count += 1
+    with tqdm(total=len(actions), desc="Gitコミット", disable=callback is None) as pbar:
+        for i in range(0, len(actions), BATCH_SIZE):
+            batch_actions = actions[i:i + BATCH_SIZE]
+            batch_num = (i // BATCH_SIZE) + 1
+            total_batches = (len(actions) + BATCH_SIZE - 1) // BATCH_SIZE
             
-            if callback:
-                progress = 90 + int((i / len(actions)) * 5)
-                callback.log_info("Git操作", f"バッチ{batch_num}/{total_batches}完了", progress)
-        except requests.HTTPError as e:
-            if callback:
-                callback.log_error("Git操作", f"コミット失敗 (batch {batch_num}): {str(e)}", 90)
-            raise
+            commit_message = f"auto deploy: update index files (batch {batch_num}/{total_batches}, added: {len([a for a in batch_actions if a['action'] == 'create'])}, deleted: {len([a for a in batch_actions if a['action'] == 'delete'])})"
+            
+            url = f"{GITLAB_API_BASE}/projects/{GITLAB_PROJECT_ID}/repository/commits"
+            payload = {
+                "branch": branch,
+                "commit_message": commit_message,
+                "actions": batch_actions
+            }
+            
+            try:
+                response = _gitlab_request("POST", url, json=payload)
+                commit_data = response.json()
+                last_commit_sha = commit_data.get("id", "")
+                commit_sha_list.append(last_commit_sha)  # コミットSHAを記録
+                commit_count += 1
+                
+                if callback:
+                    progress = 90 + int((i / max(len(actions), 1)) * 5)
+                    callback.log_info("Git操作", f"バッチ{batch_num}/{total_batches}完了", progress)
+            except requests.HTTPError as e:
+                if callback:
+                    callback.log_error("Git操作", f"コミット失敗 (batch {batch_num}): {str(e)}", 90)
+                raise
+            finally:
+                pbar.update(len(batch_actions))
     
     if callback:
         callback.log_info("Git操作", f"すべてのコミット完了: {commit_count}個のコミットを作成", 95)
@@ -1005,25 +1006,25 @@ def revert_commits(commit_sha_list: List[str], branch: str = GITLAB_BRANCH, call
     if callback:
         callback.log_warning("ロールバック", f"{total_commits}個のコミットをrevert中...", 100)
     
-    # 新しいコミットから古いコミットへ逆順でrevert
-    for i, commit_sha in enumerate(reversed(commit_sha_list)):
-        try:
-            url = f"{GITLAB_API_BASE}/projects/{GITLAB_PROJECT_ID}/repository/commits/{commit_sha}/revert"
-            payload = {
-                "branch": branch
-            }
-            
-            response = _gitlab_request("POST", url, json=payload)
-            reverted_count += 1
-            
-            if callback and (i + 1) % 10 == 0:
-                callback.log_info("ロールバック", f"revert進捗: {i + 1}/{total_commits}", 100)
+    with tqdm(total=total_commits, desc="コミットrevert", disable=callback is None) as pbar:
+        for i, commit_sha in enumerate(reversed(commit_sha_list)):
+            try:
+                url = f"{GITLAB_API_BASE}/projects/{GITLAB_PROJECT_ID}/repository/commits/{commit_sha}/revert"
+                payload = {
+                    "branch": branch
+                }
                 
-        except requests.HTTPError as e:
-            # revertに失敗した場合でも続行（既にrevertされている可能性）
-            if callback:
-                callback.log_warning("ロールバック", f"コミット {commit_sha[:8]} のrevertに失敗: {str(e)}", 100)
-            continue
+                _gitlab_request("POST", url, json=payload)
+                reverted_count += 1
+                
+                if callback and ((i + 1) % 10 == 0 or i == total_commits - 1):
+                    callback.log_info("ロールバック", f"revert進捗: {i + 1}/{total_commits}", 100)
+                    
+            except requests.HTTPError as e:
+                if callback:
+                    callback.log_warning("ロールバック", f"コミット {commit_sha[:8]} のrevertに失敗: {str(e)}", 100)
+            finally:
+                pbar.update(1)
     
     if callback:
         callback.log_info("ロールバック", f"{reverted_count}/{total_commits} 個のコミットをrevertしました", 100)
@@ -1162,10 +1163,13 @@ def run_jenkins_flow(params: Dict[str, str], callback=None) -> str:
 def cleanup_output_files(callback=None) -> None:
     """出力ディレクトリのファイルをクリーンアップ"""
     try:
+        files = list(OUTPUT_DIR.glob("*.json"))
         deleted_count = 0
-        for file_path in OUTPUT_DIR.glob("*.json"):
-            file_path.unlink()
-            deleted_count += 1
+        with tqdm(total=len(files), desc="ファイルクリーンアップ", disable=callback is None) as pbar:
+            for file_path in files:
+                file_path.unlink()
+                deleted_count += 1
+                pbar.update(1)
         
         if callback:
             callback.log_info("ファイルクリーンアップ", f"{deleted_count}件のファイルを削除", 100)
