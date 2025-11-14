@@ -1,7 +1,7 @@
 import logging
 import os
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import deploy_automation as legacy
 from fastapi import APIRouter, Body, HTTPException
@@ -10,6 +10,7 @@ from app.schemas import (
     DeployParameterPayload,
     DeployWebhookResponse,
     GitLabWebhookPayload,
+    IndexNameShortPayload,
 )
 from app.services import (
     DeployAutomationConfig,
@@ -102,10 +103,38 @@ def _update_legacy_params(overrides: Dict[str, str]) -> None:
     )
 
 
-def _run_n8n_flows(payload: GitLabWebhookPayload, overrides: Dict[str, str], *, force: bool) -> DeployWebhookResponse:
+def _run_n8n_flows(
+    payload: GitLabWebhookPayload,
+    overrides: Dict[str, str],
+    *,
+    force: bool,
+    flow_sequence: Optional[Tuple[str, ...]] = None,
+) -> DeployWebhookResponse:
     config = build_config(payload, overrides)
     service = DeployService(config)
-    return service.handle_webhook(payload, force=force)
+    return service.handle_webhook(payload, force=force, flow_sequence=flow_sequence)
+
+
+def _prepare_n8n_payload(index_name_short: str) -> Tuple[GitLabWebhookPayload, Dict[str, str]]:
+    params = _load_saved_params(index_name_short)
+    payload = GitLabWebhookPayload(index_name_short=index_name_short)
+    overrides = _build_overrides(params, payload)
+    payload.work_env = overrides.get("WORK_ENV") or payload.work_env
+    payload.index_name_short = overrides.get("INDEX_NAME_SHORT") or payload.index_name_short
+    _update_legacy_params(overrides)
+    return payload, overrides
+
+
+def _run_n8n_sequence_by_index(
+    index_name_short: str,
+    *,
+    flow_sequence: Tuple[str, ...],
+    detail_suffix: str,
+) -> DeployWebhookResponse:
+    payload, overrides = _prepare_n8n_payload(index_name_short)
+    response = _run_n8n_flows(payload, overrides, force=True, flow_sequence=flow_sequence)
+    response.detail = (response.detail or "") + f" | {detail_suffix}" if response.detail else detail_suffix
+    return response
 
 
 def _run_full_sequence(payload: GitLabWebhookPayload, params: DeployParameters) -> DeployWebhookResponse:
@@ -154,6 +183,36 @@ def _run_full_sequence(payload: GitLabWebhookPayload, params: DeployParameters) 
             legacy.save_tag_info(overrides["NEW_TAG"], overrides.get("OLD_TAG", ""))
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("タグ情報の保存に失敗しました: %s", exc)
+
+        # deploy_config.json に最終タグ情報を反映
+        try:
+            idx = payload.index_name_short or ""
+            existing = config_store.load(idx) if idx else None
+
+            if existing:
+                existing.new_tag = overrides["NEW_TAG"]
+                existing.old_tag = overrides.get("OLD_TAG", "")
+                existing.created_at = datetime.utcnow()
+                config_store.save(existing)
+            else:
+                params = DeployParameters(
+                    new_tag=overrides["NEW_TAG"],
+                    old_tag=overrides.get("OLD_TAG", ""),
+                    branch_name=(params.branch_name if 'params' in locals() and getattr(params, 'branch_name', None) else ""),
+                    work_env=payload.work_env,
+                    index_name_short=idx,
+                    created_at=datetime.utcnow(),
+                )
+                config_store.save(params)
+
+            logger.info(
+                "deploy_config.json を更新しました: index=%s new_tag=%s old_tag=%s",
+                idx,
+                overrides["NEW_TAG"],
+                overrides.get("OLD_TAG", ""),
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("deploy_config.json の更新に失敗しました: %s", exc)
 
     response.detail = (response.detail or "") + " | full sequence" if response.detail else "full sequence"
     return response
@@ -213,16 +272,29 @@ async def run_full(payload: GitLabWebhookPayload = Body(default_factory=GitLabWe
 
 
 @router.post("/run/n8n", response_model=DeployWebhookResponse)
-async def run_n8n_only(payload: GitLabWebhookPayload = Body(default_factory=GitLabWebhookPayload)) -> DeployWebhookResponse:
-    params = _load_saved_params(payload.index_name_short)
-    overrides = _build_overrides(params, payload)
-    payload.work_env = overrides.get("WORK_ENV") or payload.work_env
-    payload.index_name_short = overrides.get("INDEX_NAME_SHORT") or payload.index_name_short
+async def run_n8n_only(payload: IndexNameShortPayload) -> DeployWebhookResponse:
+    return _run_n8n_sequence_by_index(
+        payload.index_name_short,
+        flow_sequence=("flow1", "flow2", "flow3"),
+        detail_suffix="n8n only",
+    )
 
-    _update_legacy_params(overrides)
 
-    response = _run_n8n_flows(payload, overrides, force=True)
-    response.detail = (response.detail or "") + " | n8n only" if response.detail else "n8n only"
-    return response
+@router.post("/run/n8n-index-and-upload", response_model=DeployWebhookResponse)
+async def run_n8n_index_and_upload(payload: IndexNameShortPayload) -> DeployWebhookResponse:
+    return _run_n8n_sequence_by_index(
+        payload.index_name_short,
+        flow_sequence=("flow1", "flow2"),
+        detail_suffix="n8n index and upload",
+    )
+
+
+@router.post("/run/n8n-change-alias", response_model=DeployWebhookResponse)
+async def run_n8n_change_alias(payload: IndexNameShortPayload) -> DeployWebhookResponse:
+    return _run_n8n_sequence_by_index(
+        payload.index_name_short,
+        flow_sequence=("flow3",),
+        detail_suffix="n8n change alias",
+    )
 
 

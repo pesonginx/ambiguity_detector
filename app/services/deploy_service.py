@@ -1,7 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 import deploy_automation as legacy
 
@@ -14,6 +14,9 @@ from app.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+FlowSequence = Tuple[str, ...]
+DEFAULT_FLOW_SEQUENCE: FlowSequence = ("flow1", "flow2", "flow3")
 
 
 @dataclass
@@ -74,11 +77,12 @@ class DeployService:
 
         return FlowResult(flow=url, status_code=response.status_code, detail=response.text)
 
-    def run_flows(self) -> List[FlowResult]:
+    def run_flows(self, flow_sequence: Optional[FlowSequence] = None) -> List[FlowResult]:
         payload = self._build_payload()
         results: List[FlowResult] = []
+        sequence = flow_sequence or DEFAULT_FLOW_SEQUENCE
 
-        for name in ("flow1", "flow2", "flow3"):
+        for name in sequence:
             url = self.config.flow_urls.get(name)
             if not url:
                 continue
@@ -93,7 +97,13 @@ class DeployService:
 
         return results
 
-    def handle_webhook(self, payload: GitLabWebhookPayload, *, force: bool = False) -> DeployWebhookResponse:
+    def handle_webhook(
+        self,
+        payload: GitLabWebhookPayload,
+        *,
+        force: bool = False,
+        flow_sequence: Optional[FlowSequence] = None,
+    ) -> DeployWebhookResponse:
         if not force and not payload.is_merge_event():
             return DeployWebhookResponse(
                 triggered=False,
@@ -102,7 +112,7 @@ class DeployService:
                 flows=[],
             )
 
-        flows = self.run_flows()
+        flows = self.run_flows(flow_sequence)
 
         if not flows:
             return DeployWebhookResponse(

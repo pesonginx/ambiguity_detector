@@ -27,6 +27,8 @@ import requests
 from requests.auth import HTTPBasicAuth
 from tqdm import tqdm
 
+logger = logging.getLogger(__name__)
+
 # .env ファイルをロード（flask_appの1つ上の階層）
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -798,7 +800,41 @@ def process_excel_to_index(
 # =====================================================
 # Step 10: Git操作、タグ作成、デプロイ
 # =====================================================
-def _gitlab_request(method: str, url: str, **kwargs) -> requests.Response:
+try:
+    GITLAB_RETRY_MAX_ATTEMPTS = max(int(os.getenv("GITLAB_RETRY_MAX_ATTEMPTS", "3")), 1)
+except ValueError:
+    GITLAB_RETRY_MAX_ATTEMPTS = 3
+
+try:
+    GITLAB_RETRY_WAIT_SECONDS = max(float(os.getenv("GITLAB_RETRY_WAIT_SECONDS", "2")), 0.1)
+except ValueError:
+    GITLAB_RETRY_WAIT_SECONDS = 2.0
+
+GITLAB_RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+
+
+def _should_retry_status(status_code: Optional[int]) -> bool:
+    """判定: ステータスコードがリトライ対象か"""
+    if status_code is None:
+        return True
+    if status_code >= 500:
+        return True
+    return status_code in GITLAB_RETRYABLE_STATUS_CODES
+
+
+def _log_gitlab_retry(callback, attempt: int, error: Exception, wait_time: float) -> None:
+    """GitLabリトライ時のログ出力"""
+    message = (
+        f"GitLab APIリクエスト失敗 (attempt {attempt}/{GITLAB_RETRY_MAX_ATTEMPTS}): "
+        f"{error}. {wait_time:.1f}秒後にリトライします。"
+    )
+    if callback:
+        callback.log_warning("Git操作", message, 90)
+    else:
+        logger.warning(message)
+
+
+def _gitlab_request(method: str, url: str, callback=None, **kwargs) -> requests.Response:
     """GitLab APIリクエストを実行"""
     headers = kwargs.pop("headers", {})
     headers["PRIVATE-TOKEN"] = GITLAB_TOKEN
@@ -808,18 +844,41 @@ def _gitlab_request(method: str, url: str, **kwargs) -> requests.Response:
         proxies['http'] = HTTP_PROXY
     if HTTPS_PROXY:
         proxies['https'] = HTTPS_PROXY
+    attempt = 1
+    last_error: Optional[Exception] = None
     
-    response = requests.request(
-        method.upper(),
-        url,
-        headers=headers,
-        proxies=proxies,
-        verify=VERIFY_SSL,
-        timeout=TIMEOUT,
-        **kwargs
-    )
-    response.raise_for_status()
-    return response
+    while attempt <= GITLAB_RETRY_MAX_ATTEMPTS:
+        try:
+            response = requests.request(
+                method.upper(),
+                url,
+                headers=headers,
+                proxies=proxies,
+                verify=VERIFY_SSL,
+                timeout=TIMEOUT,
+                **kwargs
+            )
+            response.raise_for_status()
+            return response
+        except requests.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else None
+            if not _should_retry_status(status_code):
+                raise
+            last_error = e
+        except requests.RequestException as e:
+            last_error = e
+        
+        if attempt >= GITLAB_RETRY_MAX_ATTEMPTS:
+            break
+        
+        wait_time = GITLAB_RETRY_WAIT_SECONDS * (2 ** (attempt - 1))
+        _log_gitlab_retry(callback, attempt, last_error or Exception("Unknown error"), wait_time)
+        time.sleep(wait_time)
+        attempt += 1
+    
+    if last_error:
+        raise last_error
+    raise RuntimeError("GitLabリクエストで不明なエラーが発生しました。")
 
 
 def get_latest_commit_sha(branch: str = GITLAB_BRANCH) -> str:
@@ -903,7 +962,7 @@ def commit_files_to_gitlab_batch(
             }
             
             try:
-                response = _gitlab_request("POST", url, json=payload)
+                response = _gitlab_request("POST", url, callback=callback, json=payload)
                 commit_data = response.json()
                 last_commit_sha = commit_data.get("id", "")
                 commit_sha_list.append(last_commit_sha)  # コミットSHAを記録
@@ -969,7 +1028,7 @@ def build_next_tag(max_seq: int, tz_name: str = "Asia/Tokyo") -> str:
     return f"{(max_seq + 1):03d}-{today}"
 
 
-def create_gitlab_tag(tag_name: str, ref: str, message: str = TAG_MESSAGE) -> None:
+def create_gitlab_tag(tag_name: str, ref: str, message: str = TAG_MESSAGE, callback=None) -> None:
     """GitLabにタグを作成"""
     url = f"{GITLAB_API_BASE}/projects/{GITLAB_PROJECT_ID}/repository/tags"
     payload = {"tag_name": tag_name, "ref": ref}
@@ -977,7 +1036,7 @@ def create_gitlab_tag(tag_name: str, ref: str, message: str = TAG_MESSAGE) -> No
         payload["message"] = message
     
     try:
-        _gitlab_request("POST", url, data=payload)
+        _gitlab_request("POST", url, callback=callback, data=payload)
     except requests.HTTPError as e:
         # タグが既に存在する場合は無視
         if e.response.status_code == 400 and "already exists" in e.response.text:
@@ -1014,7 +1073,7 @@ def revert_commits(commit_sha_list: List[str], branch: str = GITLAB_BRANCH, call
                     "branch": branch
                 }
                 
-                _gitlab_request("POST", url, json=payload)
+                _gitlab_request("POST", url, callback=callback, json=payload)
                 reverted_count += 1
                 
                 if callback and ((i + 1) % 10 == 0 or i == total_commits - 1):
@@ -1253,7 +1312,7 @@ def git_and_deploy_flow(
                 old_tag = name
                 break
         
-        create_gitlab_tag(new_tag, last_commit_sha or GITLAB_BRANCH)
+        create_gitlab_tag(new_tag, last_commit_sha or GITLAB_BRANCH, callback=callback)
         result["new_tag"] = new_tag
         result["old_tag"] = old_tag
         

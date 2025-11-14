@@ -89,3 +89,12 @@ class DeployParameterPayload(BaseModel):
         }
 
 
+class IndexNameShortPayload(BaseModel):
+    """index_name_shortのみを受け取る簡易リクエスト."""
+
+    index_name_short: str
+
+    class Config:
+        json_schema_extra = {"example": {"index_name_short": "sample"}}
+
+
